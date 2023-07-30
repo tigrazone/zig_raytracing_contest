@@ -1,0 +1,37 @@
+{
+	"folders":
+	[
+		{
+			"path": ".",
+			/*"file_exclude_patterns": ["*.bin"],*/
+			/*"folder_exclude_patterns":
+			[
+				"zig-cache",
+				"zig-out"
+			],*/
+			"folder_exclude_patterns":
+			[
+				"zig-cache",
+				"zig-out"
+			],
+		},
+		{
+			"path": "C:\\zig\\lib\\std",
+		},
+	],
+	"build_systems":
+	[
+		{
+			"name": "Run",
+			"shell_cmd": "zig build run",
+			"working_dir": "$project_path",
+			"file_regex": "(.*?):(\\d+):(\\d+): (error: .*)",
+		},
+		{
+			"name": "Test",
+			"shell_cmd": "zig build test",
+			"working_dir": "$project_path",
+			"file_regex": "(.*?):(\\d+):(\\d+): (error: .*)",
+		},
+	],
+}
