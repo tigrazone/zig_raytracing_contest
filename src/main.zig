@@ -1,24 +1,70 @@
 const std = @import("std");
 
-pub fn main() !void {
-    // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
+const default_input = "input.gltf";
+const default_output = "output.png";
 
-    // stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    const stdout = bw.writer();
+const CmdlineArgs = struct {
+    in: [:0]const u8 = default_input,
+    out: [:0]const u8 = default_output,
+    width: u16 = 1280,
+    height: u16 = 720,
 
-    try stdout.print("Run `zig build test` to run the tests.\n", .{});
+    fn deinit(self: CmdlineArgs, allocator: std.mem.Allocator) void {
+        if (self.in.ptr != default_input.ptr) {
+            allocator.free(self.in);
+        }
+        if (self.out.ptr != default_output.ptr) {
+            allocator.free(self.out);
+        }
+    }
 
-    try bw.flush(); // don't forget to flush!
+    fn print(self: CmdlineArgs) void {
+        std.debug.print("--in {s} --out {s} --width {} --height {}\n", .{
+            self.in,
+            self.out,
+            self.width,
+            self.height,
+        });
+    }
+};
+
+fn parseCmdline(allocator: std.mem.Allocator) !CmdlineArgs {
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
+
+    var i: usize = 1;
+    var result: CmdlineArgs = .{};
+    while (i < args.len) {
+        const arg = args[i];
+        i += 1;
+        if (std.mem.eql(u8, arg, "--in")) {
+            result.in = try allocator.dupeZ(u8, args[i]);
+            i += 1;
+        } else if (std.mem.eql(u8, arg, "--out")) {
+            result.out = try allocator.dupeZ(u8, args[i]);
+            i += 1;
+        } else if (std.mem.eql(u8, arg, "--width")) {
+            result.width = try std.fmt.parseInt(u16, args[i], 10);
+            i += 1;
+        } else if (std.mem.eql(u8, arg, "--height")) {
+            result.height = try std.fmt.parseInt(u16, args[i], 10);
+            i += 1;
+        } else {
+            return error.UnsupportedCmdlineArgument;
+        }
+
+    }
+    return result;
 }
 
-test "simple test" {
-    var list = std.ArrayList(i32).init(std.testing.allocator);
-    defer list.deinit(); // try commenting this out and see if zig detects the memory leak!
-    try list.append(42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer std.debug.assert(gpa.deinit() == .ok);
+
+    const allocator = gpa.allocator();
+
+    const cmdline_args = try parseCmdline(allocator);
+    defer cmdline_args.deinit(allocator);
+
+    cmdline_args.print();
 }
