@@ -23,7 +23,7 @@
 	[
 		{
 			"name": "Run",
-			"shell_cmd": "zig build run -- --in $project_path\\models\\Duck.glb --out $project_path\\output.png --width 1920 --height 1080",
+			"shell_cmd": "zig build run -- --in $project_path\\models\\Duck.glb --out $project_path\\output.png --width 800 --height 600",
 			"working_dir": "$project_path",
 			"file_regex": "(.*?):(\\d+):(\\d+): (error: .*)",
 		},

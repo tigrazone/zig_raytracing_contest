@@ -2,7 +2,10 @@ const std = @import("std");
 
 fn linkEverything(b: *std.Build, module: *std.Build.Step.Compile) void {
     _ = b;
+
     module.linkLibC();
+    module.addIncludePath("libs");
+    module.addCSourceFile("src/c_impl.c", &.{});
 }
 
 // Although this function looks imperative, note that its job is to
