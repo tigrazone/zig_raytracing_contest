@@ -193,6 +193,23 @@ const Matrix4 = struct {
         }
         return result;
     }
+
+    fn col3(self: Matrix4, column: usize) Vec3 {
+        return Vec3.init(
+            self.get(0, column),
+            self.get(1, column),
+            self.get(2, column),
+        );
+    }
+
+    fn transformPosition(self: Matrix4, v: Vec3) Vec3 {
+        return .{ .data =
+            self.col3(0).scale(v.x()).data +
+            self.col3(1).scale(v.y()).data +
+            self.col3(2).scale(v.z()).data +
+            self.col3(3).data
+        };
+    }
 };
 
 fn mul(a: Matrix4, b: Matrix4) Matrix4 {
@@ -277,7 +294,7 @@ const Camera = struct {
         const f_h: f32 = @floatFromInt(h);
 
         const matrix = try getNodeTransform(camera_node);
-        const origin = vec3(matrix.get(0,3), matrix.get(1,3), matrix.get(2,3)).scale(100); // REMOVE SCALE HERE
+        const origin = vec3(matrix.get(0,3), matrix.get(1,3), matrix.get(2,3));
         const fwd = vec3(matrix.get(0,2), matrix.get(1,2), matrix.get(2,2)).scale(-1).normalize();
         const world_up = vec3(0,1,0);
 
@@ -322,14 +339,6 @@ const Ray = struct {
     }
 };
 
-fn getEnvColor(ray: Ray) Vec3 {
-    const t = 0.5*(ray.dir.y()+1.0);
-    return add(
-        Vec3.ones().scale(1.0-t),
-        Vec3.init(0.5, 0.7, 1.0).scale(t)
-    );
-}
-
 fn rayTriangleIntersection(ray: Ray, v0: Vec3, v1: Vec3, v2: Vec3) bool
 {
     const v0v1 = subtract(v1, v0);
@@ -369,75 +378,132 @@ fn rayTriangleIntersection(ray: Ray, v0: Vec3, v1: Vec3, v2: Vec3) bool
     return true;
 }
 
-fn traceRay(ray: Ray, gltf_data: *c.cgltf_data) bool {
-    std.debug.assert(gltf_data.meshes_count == 1);
-    const mesh = gltf_data.meshes[0];
-    std.debug.assert(mesh.primitives_count == 1);
-    const primitive = mesh.primitives[0];
-    std.debug.assert(primitive.type == c.cgltf_primitive_type_triangles);
+const Triangle = struct {
+    v0: Vec3,
+    v1: Vec3,
+    v2: Vec3,
+};
 
-    const positions: *c.cgltf_accessor = blk: {
-        for (0..primitive.attributes_count) |i| {
-            if (primitive.attributes[i].type == c.cgltf_attribute_type_position) {
-                break :blk primitive.attributes[i].data;
+const Scene = struct {
+    camera: Camera,
+    triangles: []Triangle,
+
+    fn findMeshNode(gltf_data: *c.cgltf_data) !*c.cgltf_node {
+        for (0..gltf_data.nodes_count) |node_idx| {
+            const node: *c.cgltf_node = gltf_data.nodes + node_idx;
+            if (node.mesh != null) {
+                return node;
             }
         }
-        @panic("imlement me");
-    };
-    const indices: *c.cgltf_accessor = primitive.indices;
+        return error.NoMeshFound; // TODO: implement recursive search / deal with multiple meshes
+    }
 
-    const vertex_address =
-        @as([*]u8, @ptrCast(positions.buffer_view.*.buffer.*.data)) +
-        positions.buffer_view.*.offset +
-        positions.offset;
+    fn load(args: CmdlineArgs, allocator: std.mem.Allocator) !Scene {
+        const options = std.mem.zeroes(c.cgltf_options);
+        var gltf_data: ?*c.cgltf_data = null;
+        try CGLTF_CHECK(c.cgltf_parse_file(&options, args.in.ptr, &gltf_data));
+        defer c.cgltf_free(gltf_data);
 
-    const index_address =
-        @as([*]u8, @ptrCast(indices.buffer_view.*.buffer.*.data)) +
-        indices.buffer_view.*.offset +
-        indices.offset;
+        try CGLTF_CHECK(c.cgltf_load_buffers(&options, gltf_data, std.fs.path.dirname(args.in).?.ptr));
 
-    std.debug.assert(positions.type == c.cgltf_type_vec3);
-    std.debug.assert(indices.type == c.cgltf_type_scalar);
-    std.debug.assert(positions.component_type == c.cgltf_component_type_r_32f);
-    std.debug.assert(indices.component_type == c.cgltf_component_type_r_16u);
+        const mesh_node = try findMeshNode(gltf_data.?);
 
-    var i: usize = 0;
-    while (i < indices.count) : (i += 3)
-    {
-        const index: [*]u16 = @ptrCast(@alignCast(index_address + i*indices.stride));
+        const mesh = mesh_node.mesh;
+        std.debug.assert(mesh.*.primitives_count == 1);
+        const primitive = mesh.*.primitives[0];
+        std.debug.assert(primitive.type == c.cgltf_primitive_type_triangles);
 
-        const pos0: [*]f32 = @ptrCast(@alignCast(vertex_address + index[0]*positions.stride));
-        const pos1: [*]f32 = @ptrCast(@alignCast(vertex_address + index[1]*positions.stride));
-        const pos2: [*]f32 = @ptrCast(@alignCast(vertex_address + index[2]*positions.stride));
+        const positions: *c.cgltf_accessor = blk: {
+            for (0..primitive.attributes_count) |i| {
+                if (primitive.attributes[i].type == c.cgltf_attribute_type_position) {
+                    break :blk primitive.attributes[i].data;
+                }
+            }
+            @panic("imlement me");
+        };
+        const indices: *c.cgltf_accessor = primitive.indices;
 
-        const v0 = vec3(pos0[0], pos0[1], pos0[2]);
-        const v1 = vec3(pos1[0], pos1[1], pos1[2]);
-        const v2 = vec3(pos2[0], pos2[1], pos2[2]);
+        const vertex_address =
+            @as([*]u8, @ptrCast(positions.buffer_view.*.buffer.*.data)) +
+            positions.buffer_view.*.offset +
+            positions.offset;
 
-        if (rayTriangleIntersection(ray, v0, v1, v2)) {
-            return true;
+        const index_address =
+            @as([*]u8, @ptrCast(indices.buffer_view.*.buffer.*.data)) +
+            indices.buffer_view.*.offset +
+            indices.offset;
+
+        std.debug.assert(positions.type == c.cgltf_type_vec3);
+        std.debug.assert(indices.type == c.cgltf_type_scalar);
+        std.debug.assert(positions.component_type == c.cgltf_component_type_r_32f);
+        std.debug.assert(indices.component_type == c.cgltf_component_type_r_16u);
+
+        const triangles_count = indices.count / 3;
+        const triangles = try allocator.alloc(Triangle, triangles_count);
+        errdefer allocator.free(triangles);
+
+        const matrix = try getNodeTransform(mesh_node);
+
+        for (0..triangles_count) |triangle_idx| {
+            const index: [*]u16 = @ptrCast(@alignCast(index_address + triangle_idx*3*indices.stride));
+
+            const pos0: [*]f32 = @ptrCast(@alignCast(vertex_address + index[0]*positions.stride));
+            const pos1: [*]f32 = @ptrCast(@alignCast(vertex_address + index[1]*positions.stride));
+            const pos2: [*]f32 = @ptrCast(@alignCast(vertex_address + index[2]*positions.stride));
+
+            triangles[triangle_idx] = .{
+                .v0 = matrix.transformPosition(vec3(pos0[0], pos0[1], pos0[2])),
+                .v1 = matrix.transformPosition(vec3(pos1[0], pos1[1], pos1[2])),
+                .v2 = matrix.transformPosition(vec3(pos2[0], pos2[1], pos2[2])),
+            };
         }
-    }
-    return false;
-}
 
-fn getRayColor(ray: Ray, gltf_data: *c.cgltf_data) Vec3 {
-    const hit = traceRay(ray, gltf_data);
-
-    if (hit == false) {
-        return getEnvColor(ray);
+        return .{
+            .camera = try Camera.init(gltf_data.?, args.width, args.height),
+            .triangles = triangles,
+        };
     }
 
-    return vec3(0, 0, 0);
-}
+    fn deinit(self: Scene, allocator: std.mem.Allocator) void {
+        allocator.free(self.triangles);
+    }
 
-fn getPixelColor(x: u16, y: u16, camera: Camera, gltf_data: *c.cgltf_data) RGB
-{
-    const ray = camera.getRandomRay(x, y);
-    // std.debug.print("{}\n", .{ray});
-    const color = getRayColor(ray, gltf_data);
-    return color.sqrt().toRGB();
-}
+    fn traceRay(scene: Scene, ray: Ray) bool
+    {
+        for (scene.triangles) |triangle| {
+            if (rayTriangleIntersection(ray, triangle.v0, triangle.v1, triangle.v2)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    fn getEnvColor(ray: Ray) Vec3 {
+        const t = 0.5*(ray.dir.y()+1.0);
+        return add(
+            Vec3.ones().scale(1.0-t),
+            Vec3.init(0.5, 0.7, 1.0).scale(t)
+        );
+    }
+
+    fn getSampleColor(scene: Scene, ray: Ray) Vec3 {
+        const hit = scene.traceRay(ray);
+
+        if (hit == false) {
+            return getEnvColor(ray);
+        }
+
+        return vec3(0, 0, 0);
+    }
+
+    fn getPixelColor(scene: Scene, x: u16, y: u16) RGB
+    {
+        const ray = scene.camera.getRandomRay(x, y);
+        const color = scene.getSampleColor(ray);
+        return color.sqrt().toRGB();
+    }
+};
 
 pub const std_options = struct {
     pub const log_level = .info;
@@ -454,32 +520,29 @@ pub fn main() !void {
     defer args.deinit(allocator);
     args.print();
 
-    const options = std.mem.zeroes(c.cgltf_options);
-    var gltf_data: ?*c.cgltf_data = null;
-    try CGLTF_CHECK(c.cgltf_parse_file(&options, args.in.ptr, &gltf_data));
-    defer c.cgltf_free(gltf_data);
+    const scene = try Scene.load(args, allocator);
+    defer scene.deinit(allocator);
 
-    try CGLTF_CHECK(c.cgltf_load_buffers(&options, gltf_data, std.fs.path.dirname(args.in).?.ptr));
+    const w = scene.camera.w;
+    const h = scene.camera.h;
 
-    const camera = try Camera.init(gltf_data.?, args.width, args.height);
-
-    var img = try allocator.alloc(RGB, camera.w * camera.h);
+    var img = try allocator.alloc(RGB, w * h);
     defer allocator.free(img);
 
-    for (0..camera.h) |y| {
-        for (0..camera.w) |x| {
-            const row = camera.h - 1 - y;
-            const column = camera.w - 1 - x;
-            img[row*camera.w+column] = getPixelColor(@intCast(x), @intCast(y), camera, gltf_data.?);
+    for (0..h) |y| {
+        for (0..w) |x| {
+            const row = h - 1 - y;
+            const column = w - 1 - x;
+            img[row*w+column] = scene.getPixelColor(@intCast(x), @intCast(y));
         }
     }
 
     const res = c.stbi_write_png(args.out.ptr,
-        @intCast(camera.w),
-        @intCast(camera.h),
+        @intCast(w),
+        @intCast(h),
         @intCast(@sizeOf(RGB)),
         img.ptr,
-        @intCast(@sizeOf(RGB) * camera.w));
+        @intCast(@sizeOf(RGB) * w));
 
     if (res != 1) {
         return error.WritePngFail;
