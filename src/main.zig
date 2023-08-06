@@ -175,6 +175,52 @@ test "vector length" {
     try std.testing.expectApproxEqAbs(v.length(), 102.21281720019266, 0.0001);
 }
 
+const Matrix4 = struct {
+    data: [16]f32,
+
+    fn get(self: Matrix4, row: usize, column: usize) f32 {
+        return self.data[column*4+row];
+    }
+
+    fn set(self: *Matrix4, row: usize, column: usize, val: f32) void {
+        self.data[column*4+row] = val;
+    }
+
+    fn ident() Matrix4 {
+        var result: Matrix4 = .{ .data = [_]f32{0} ** 16 };
+        for (0..4) |i| {
+            result.data[i*4+i] = 1;
+        }
+        return result;
+    }
+};
+
+fn mul(a: Matrix4, b: Matrix4) Matrix4 {
+    var result: Matrix4 = undefined;
+    for (0..4) |column| {
+        for (0..4) |row| {
+            var acc: f32 = 0;
+            for (0..4) |i| {
+                acc += a.get(row, i) * b.get(i, column);
+            }
+            result.set(row, column, acc);
+        }
+    }
+    return result;
+}
+
+fn getNodeTransform(node: *c.cgltf_node) !Matrix4 {
+    if (node.has_translation != 0 or node.has_rotation != 0 or node.has_scale != 0) {
+        return error.ImplementMe;
+    }
+    const matrix: Matrix4 = if (node.has_matrix != 0) .{ .data = node.matrix } else Matrix4.ident();
+    if (node.parent == null) {
+        return matrix;
+    } else {
+        return mul(try getNodeTransform(node.parent), matrix);
+    }
+}
+
 const Camera = struct {
     w: u32,
     h: u32,
@@ -230,11 +276,11 @@ const Camera = struct {
         const f_w: f32 = @floatFromInt(w);
         const f_h: f32 = @floatFromInt(h);
 
-        const origin = vec3(0,0,-1000);
-        const lookat = vec3(0,0,0);
+        const matrix = try getNodeTransform(camera_node);
+        const origin = vec3(matrix.get(0,3), matrix.get(1,3), matrix.get(2,3)).scale(100); // REMOVE SCALE HERE
+        const fwd = vec3(matrix.get(0,2), matrix.get(1,2), matrix.get(2,2)).scale(-1).normalize();
         const world_up = vec3(0,1,0);
 
-        const fwd = subtract(lookat, origin).normalize();
         const right = cross(world_up, fwd).normalize();
         const up = cross(fwd, right);
 
@@ -423,7 +469,8 @@ pub fn main() !void {
     for (0..camera.h) |y| {
         for (0..camera.w) |x| {
             const row = camera.h - 1 - y;
-            img[row*camera.w+x] = getPixelColor(@intCast(x), @intCast(y), camera, gltf_data.?);
+            const column = camera.w - 1 - x;
+            img[row*camera.w+column] = getPixelColor(@intCast(x), @intCast(y), camera, gltf_data.?);
         }
     }
 
