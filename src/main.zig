@@ -147,6 +147,10 @@ fn subtract(a: Vec3, b: Vec3) Vec3 {
     return .{.data = a.data - b.data};
 }
 
+fn dot(a: Vec3, b: Vec3) f32 {
+    return @reduce(.Add, a.data * b.data);
+}
+
 fn cross(a: Vec3, b: Vec3) Vec3 {
     return .{ .data = .{
         a.y()*b.z() - a.z()*b.y(),
@@ -226,8 +230,8 @@ const Camera = struct {
         const f_w: f32 = @floatFromInt(w);
         const f_h: f32 = @floatFromInt(h);
 
-        const origin = vec3(0,0,0);
-        const lookat = vec3(0,0,-1);
+        const origin = vec3(0,0,-1000);
+        const lookat = vec3(0,0,0);
         const world_up = vec3(0,1,0);
 
         const fwd = subtract(lookat, origin).normalize();
@@ -266,9 +270,13 @@ const Camera = struct {
 const Ray = struct {
     orig: Vec3,
     dir: Vec3,
+
+    fn at(self: Ray, t: f32) Vec3 {
+        return add(self.orig, self.dir.scale(t));
+    }
 };
 
-fn getRayColor(ray: Ray) Vec3 {
+fn getEnvColor(ray: Ray) Vec3 {
     const t = 0.5*(ray.dir.y()+1.0);
     return add(
         Vec3.ones().scale(1.0-t),
@@ -276,13 +284,118 @@ fn getRayColor(ray: Ray) Vec3 {
     );
 }
 
-fn getPixelColor(x: u16, y: u16, camera: Camera) RGB
+fn rayTriangleIntersection(ray: Ray, v0: Vec3, v1: Vec3, v2: Vec3) bool
+{
+    const v0v1 = subtract(v1, v0);
+    const v0v2 = subtract(v2, v0);
+    const N = cross(v0v1, v0v2); // no need to normalize
+
+    const epsilon = 0.00000001; // TODO
+
+    // Step 1: finding P
+
+    const NdotRayDirection = dot(N, ray.dir);
+    if (@fabs(NdotRayDirection) < epsilon) {
+        return false; // they are parallel, so they don't intersect!
+    }
+
+    const d = -dot(N, v0);
+    const t = -(dot(N, ray.orig) + d) / NdotRayDirection;
+
+    if (t < 0) return false; // the triangle is behind
+
+    const P = ray.at(t);
+
+    // Step 2: inside-outside test
+
+    const edge0 = subtract(v1, v0);
+    const edge1 = subtract(v2, v1);
+    const edge2 = subtract(v0, v2);
+
+    const vp0 = subtract(P, v0);
+    const vp1 = subtract(P, v1);
+    const vp2 = subtract(P, v2);
+
+    if (dot(N, cross(edge0, vp0)) < 0) return false;
+    if (dot(N, cross(edge1, vp1)) < 0) return false;
+    if (dot(N, cross(edge2, vp2)) < 0) return false;
+
+    return true;
+}
+
+fn traceRay(ray: Ray, gltf_data: *c.cgltf_data) bool {
+    std.debug.assert(gltf_data.meshes_count == 1);
+    const mesh = gltf_data.meshes[0];
+    std.debug.assert(mesh.primitives_count == 1);
+    const primitive = mesh.primitives[0];
+    std.debug.assert(primitive.type == c.cgltf_primitive_type_triangles);
+
+    const positions: *c.cgltf_accessor = blk: {
+        for (0..primitive.attributes_count) |i| {
+            if (primitive.attributes[i].type == c.cgltf_attribute_type_position) {
+                break :blk primitive.attributes[i].data;
+            }
+        }
+        @panic("imlement me");
+    };
+    const indices: *c.cgltf_accessor = primitive.indices;
+
+    const vertex_address =
+        @as([*]u8, @ptrCast(positions.buffer_view.*.buffer.*.data)) +
+        positions.buffer_view.*.offset +
+        positions.offset;
+
+    const index_address =
+        @as([*]u8, @ptrCast(indices.buffer_view.*.buffer.*.data)) +
+        indices.buffer_view.*.offset +
+        indices.offset;
+
+    std.debug.assert(positions.type == c.cgltf_type_vec3);
+    std.debug.assert(indices.type == c.cgltf_type_scalar);
+    std.debug.assert(positions.component_type == c.cgltf_component_type_r_32f);
+    std.debug.assert(indices.component_type == c.cgltf_component_type_r_16u);
+
+    var i: usize = 0;
+    while (i < indices.count) : (i += 3)
+    {
+        const index: [*]u16 = @ptrCast(@alignCast(index_address + i*indices.stride));
+
+        const pos0: [*]f32 = @ptrCast(@alignCast(vertex_address + index[0]*positions.stride));
+        const pos1: [*]f32 = @ptrCast(@alignCast(vertex_address + index[1]*positions.stride));
+        const pos2: [*]f32 = @ptrCast(@alignCast(vertex_address + index[2]*positions.stride));
+
+        const v0 = vec3(pos0[0], pos0[1], pos0[2]);
+        const v1 = vec3(pos1[0], pos1[1], pos1[2]);
+        const v2 = vec3(pos2[0], pos2[1], pos2[2]);
+
+        if (rayTriangleIntersection(ray, v0, v1, v2)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn getRayColor(ray: Ray, gltf_data: *c.cgltf_data) Vec3 {
+    const hit = traceRay(ray, gltf_data);
+
+    if (hit == false) {
+        return getEnvColor(ray);
+    }
+
+    return vec3(0, 0, 0);
+}
+
+fn getPixelColor(x: u16, y: u16, camera: Camera, gltf_data: *c.cgltf_data) RGB
 {
     const ray = camera.getRandomRay(x, y);
     // std.debug.print("{}\n", .{ray});
-    const color = getRayColor(ray);
+    const color = getRayColor(ray, gltf_data);
     return color.sqrt().toRGB();
 }
+
+pub const std_options = struct {
+    pub const log_level = .info;
+};
 
 pub fn main() !void {
     const start_time = std.time.nanoTimestamp();
@@ -310,7 +423,7 @@ pub fn main() !void {
     for (0..camera.h) |y| {
         for (0..camera.w) |x| {
             const row = camera.h - 1 - y;
-            img[row*camera.w+x] = getPixelColor(@intCast(x), @intCast(y), camera);
+            img[row*camera.w+x] = getPixelColor(@intCast(x), @intCast(y), camera, gltf_data.?);
         }
     }
 
