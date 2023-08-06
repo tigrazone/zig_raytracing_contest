@@ -79,8 +79,14 @@ test "RGB size should be 3" {
 const Vec3 = struct {
     data: @Vector(3, f32),
 
+    fn x(self: Vec3) f32 {
+        return self.data[0];
+    }
     fn y(self: Vec3) f32 {
         return self.data[1];
+    }
+    fn z(self: Vec3) f32 {
+        return self.data[2];
     }
 
     fn zeroes() Vec3 {
@@ -91,8 +97,8 @@ const Vec3 = struct {
         return .{ .data = .{1.0, 1.0, 1.0}};
     }
 
-    fn init(x: f32, _y: f32, z: f32) Vec3 {
-        return .{ .data = .{x, _y, z}};
+    fn init(_x: f32, _y: f32, _z: f32) Vec3 {
+        return .{ .data = .{_x, _y, _z}};
     }
 
     fn sqrt(self: Vec3) Vec3 {
@@ -143,10 +149,26 @@ fn subtract(a: Vec3, b: Vec3) Vec3 {
 
 fn cross(a: Vec3, b: Vec3) Vec3 {
     return .{ .data = .{
-        a.data[1]*b.data[2] - a.data[2]*b.data[1],
-        a.data[2]*b.data[0] - a.data[0]*b.data[2],
-        a.data[0]*b.data[1] - a.data[1]*b.data[0],
+        a.y()*b.z() - a.z()*b.y(),
+        a.z()*b.x() - a.x()*b.z(),
+        a.x()*b.y() - a.y()*b.x(),
     }};
+}
+
+fn vec3(x: f32, y: f32, z: f32) Vec3 {
+    return .{ .data = .{x, y, z}};
+}
+
+test "cross product" {
+    const a = vec3(1,-8,12);
+    const b = vec3(4,6,3);
+    const result = vec3(-96,45,38);
+    try std.testing.expectEqual(cross(a,b), result);
+}
+
+test "vector length" {
+    const v = vec3(1.5, 100.0, -21.1);
+    try std.testing.expectApproxEqAbs(v.length(), 102.21281720019266, 0.0001);
 }
 
 const Camera = struct {
@@ -154,8 +176,8 @@ const Camera = struct {
     h: u32,
     origin: Vec3,
     lower_left_corner: Vec3,
-    horizontal: Vec3,
-    vertical: Vec3,
+    right: Vec3,
+    up: Vec3,
 
     fn findCameraNode(gltf_data: *c.cgltf_data) !*c.cgltf_node {
         for (0..gltf_data.nodes_count) |node_idx| {
@@ -201,42 +223,41 @@ const Camera = struct {
             h = height orelse @intFromFloat(@as(f32, @floatFromInt(width.?)) / aspect_ratio);
         }
 
-        const origin = Vec3.init(0,0,0);
-        const lookat = Vec3.init(0,0,-1);
-        const up = Vec3.init(0,1,0);
+        const f_w: f32 = @floatFromInt(w);
+        const f_h: f32 = @floatFromInt(h);
+
+        const origin = vec3(0,0,0);
+        const lookat = vec3(0,0,-1);
+        const world_up = vec3(0,1,0);
 
         const fwd = subtract(lookat, origin).normalize();
-        const u = cross(up, fwd).normalize();
-        const v = cross(fwd, u);
+        const right = cross(world_up, fwd).normalize();
+        const up = cross(fwd, right);
 
-        const focal_length = @as(f32, @floatFromInt(h / 2)) / @tan(camera.data.perspective.yfov / 2);
+        const focal_length = (f_h / 2) / @tan(camera.data.perspective.yfov / 2);
 
-        const horizontal = u.scale(@floatFromInt(w));
-        const vertical = v.scale(@floatFromInt(h));
-        const lower_left_corner = origin
-            .subtract(fwd.scale(focal_length))
-            .subtract(horizontal.scale(0.5))
-            .subtract(vertical.scale(0.5));
+        const lower_left_corner = fwd.scale(focal_length)
+            .subtract(right.scale(f_w / 2))
+            .subtract(up.scale(f_h / 2));
 
         return .{
             .w = w,
             .h = h,
             .origin = origin,
             .lower_left_corner = lower_left_corner,
-            .horizontal = horizontal,
-            .vertical = vertical
+            .right = right,
+            .up = up
         };
     }
 
     fn getRandomRay(self: Camera, x: u16, y: u16) Ray {
-        const u = @as(f32, @floatFromInt(x)) / @as(f32, @floatFromInt(self.w)); // TODO: add rand
-        const v = @as(f32, @floatFromInt(y)) / @as(f32, @floatFromInt(self.h)); // TODO: add rand
+        const f_x: f32 = @floatFromInt(x); // TODO: add rand
+        const f_y: f32 = @floatFromInt(y); // TODO: add rand
         return .{
             .orig = self.origin,
             .dir = self.lower_left_corner
-                .add(self.horizontal.scale(u))
-                .add(self.vertical.scale(v))
-                .subtract(self.origin)
+                .add(self.right.scale(f_x))
+                .add(self.up.scale(f_y))
                 .normalize()
         };
     }
@@ -258,6 +279,7 @@ fn getRayColor(ray: Ray) Vec3 {
 fn getPixelColor(x: u16, y: u16, camera: Camera) RGB
 {
     const ray = camera.getRandomRay(x, y);
+    // std.debug.print("{}\n", .{ray});
     const color = getRayColor(ray);
     return color.sqrt().toRGB();
 }
@@ -287,7 +309,8 @@ pub fn main() !void {
 
     for (0..camera.h) |y| {
         for (0..camera.w) |x| {
-            img[y*camera.w+x] = getPixelColor(@intCast(x), @intCast(y), camera);
+            const row = camera.h - 1 - y;
+            img[row*camera.w+x] = getPixelColor(@intCast(x), @intCast(y), camera);
         }
     }
 
