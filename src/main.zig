@@ -6,7 +6,10 @@ const c = @cImport({
 });
 
 fn CGLTF_CHECK(result: c.cgltf_result) !void {
-    return if (result == c.cgltf_result_success) {} else error.GltfError;
+    if (result != c.cgltf_result_success) {
+        std.log.err("GLTF error: {}", .{result});
+        return error.GltfError;
+    }
 }
 
 const default_input = "input.gltf";
