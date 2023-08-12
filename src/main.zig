@@ -186,7 +186,7 @@ const Matrix4 = struct {
         self.data[column*4+row] = val;
     }
 
-    fn ident() Matrix4 {
+    fn identity() Matrix4 {
         var result: Matrix4 = .{ .data = [_]f32{0} ** 16 };
         for (0..4) |i| {
             result.data[i*4+i] = 1;
@@ -194,8 +194,50 @@ const Matrix4 = struct {
         return result;
     }
 
+    fn translation(t: [3]f32) Matrix4 {
+        return .{ .data = .{
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, 1, 0,
+            t[0], t[1], t[2], 1,
+        }};
+    }
+
+    fn rotation(q: [4]f32) Matrix4 {
+        const x = q[0];
+        const y = q[1];
+        const z = q[2];
+        const w = q[3];
+
+        const x2 = x * x;
+        const y2 = y * y;
+        const z2 = z * z;
+        const xy = x * y;
+        const xz = x * z;
+        const yz = y * z;
+        const wx = w * x;
+        const wy = w * y;
+        const wz = w * z;
+
+        return .{ .data = .{
+            1.0-2*(y2+z2), 2*(xy+wz),     2*(xz-wy), 0,
+            2*(xy-wz),     1.0-2*(x2+z2), 2*(yz+wx), 0,
+            2*(xz+wy),     2*(yz-wx),     1.0-2*(x2+y2), 0,
+            0, 0, 0, 1,
+        }};
+    }
+
+    fn scale(s: [3]f32) Matrix4 {
+        return .{ .data = .{
+            s[0], 0, 0, 0,
+            0, s[1], 0, 0,
+            0, 0, s[2], 0,
+            0, 0, 0, 1,
+        }};
+    }
+
     fn col3(self: Matrix4, column: usize) Vec3 {
-        return Vec3.init(
+        return vec3(
             self.get(0, column),
             self.get(1, column),
             self.get(2, column),
@@ -227,10 +269,23 @@ fn mul(a: Matrix4, b: Matrix4) Matrix4 {
 }
 
 fn getNodeTransform(node: *c.cgltf_node) !Matrix4 {
-    if (node.has_translation != 0 or node.has_rotation != 0 or node.has_scale != 0) {
-        return error.ImplementMe;
+    var matrix: Matrix4 = undefined;
+    if (node.has_matrix != 0) {
+        matrix = .{ .data = node.matrix };
+    } else if (node.has_translation != 0 or node.has_rotation != 0 or node.has_scale != 0) {
+        matrix = Matrix4.identity();
+        if (node.has_translation != 0) {
+            matrix = mul(matrix, Matrix4.translation(node.translation));
+        }
+        if (node.has_rotation != 0) {
+            matrix = mul(matrix, Matrix4.rotation(node.rotation));
+        }
+        if (node.has_scale != 0) {
+            matrix = mul(matrix, Matrix4.scale(node.scale));
+        }
+    } else {
+        matrix = Matrix4.identity();
     }
-    const matrix: Matrix4 = if (node.has_matrix != 0) .{ .data = node.matrix } else Matrix4.ident();
     if (node.parent == null) {
         return matrix;
     } else {
@@ -339,25 +394,25 @@ const Ray = struct {
     }
 };
 
-fn rayTriangleIntersection(ray: Ray, v0: Vec3, v1: Vec3, v2: Vec3) bool
+fn rayTriangleIntersection(ray: Ray, v0: Vec3, v1: Vec3, v2: Vec3, t_min: f32, t_max: f32) ?Hit
 {
     const v0v1 = subtract(v1, v0);
     const v0v2 = subtract(v2, v0);
-    const N = cross(v0v1, v0v2); // no need to normalize
+    const N = cross(v0v1, v0v2);
 
     const epsilon = 0.00000001; // TODO
 
     // Step 1: finding P
 
-    const NdotRayDirection = dot(N, ray.dir);
-    if (@fabs(NdotRayDirection) < epsilon) {
-        return false; // they are parallel, so they don't intersect!
+    const NdotRayDir = dot(N, ray.dir);
+    if (@fabs(NdotRayDir) < epsilon) {
+        return null; // they are parallel, so they don't intersect!
     }
 
     const d = -dot(N, v0);
-    const t = -(dot(N, ray.orig) + d) / NdotRayDirection;
+    const t = -(dot(N, ray.orig) + d) / NdotRayDir;
 
-    if (t < 0) return false; // the triangle is behind
+    if (t < t_min or t > t_max) return null;
 
     const P = ray.at(t);
 
@@ -371,17 +426,27 @@ fn rayTriangleIntersection(ray: Ray, v0: Vec3, v1: Vec3, v2: Vec3) bool
     const vp1 = subtract(P, v1);
     const vp2 = subtract(P, v2);
 
-    if (dot(N, cross(edge0, vp0)) < 0) return false;
-    if (dot(N, cross(edge1, vp1)) < 0) return false;
-    if (dot(N, cross(edge2, vp2)) < 0) return false;
+    if (dot(N, cross(edge0, vp0)) < 0) return null;
+    if (dot(N, cross(edge1, vp1)) < 0) return null;
+    if (dot(N, cross(edge2, vp2)) < 0) return null;
 
-    return true;
+    return .{
+        .p = P,
+        .normal = N.normalize(),
+        .t = t,
+    };
 }
 
 const Triangle = struct {
     v0: Vec3,
     v1: Vec3,
     v2: Vec3,
+};
+
+const Hit = struct {
+    p: Vec3,
+    normal: Vec3,
+    t: f32,
 };
 
 const Scene = struct {
@@ -468,15 +533,19 @@ const Scene = struct {
         allocator.free(self.triangles);
     }
 
-    fn traceRay(scene: Scene, ray: Ray) bool
+    fn traceRay(scene: Scene, ray: Ray) ?Hit
     {
+        var t = std.math.inf(f32);
+        var result: ?Hit = null;
         for (scene.triangles) |triangle| {
-            if (rayTriangleIntersection(ray, triangle.v0, triangle.v1, triangle.v2)) {
-                return true;
+            if (rayTriangleIntersection(ray, triangle.v0, triangle.v1, triangle.v2, 0, t)) |hit| {
+                if (hit.t < t) {
+                    result = hit;
+                    t = hit.t;
+                }
             }
         }
-
-        return false;
+        return result;
     }
 
     fn getEnvColor(ray: Ray) Vec3 {
@@ -488,13 +557,11 @@ const Scene = struct {
     }
 
     fn getSampleColor(scene: Scene, ray: Ray) Vec3 {
-        const hit = scene.traceRay(ray);
-
-        if (hit == false) {
-            return getEnvColor(ray);
+        if (scene.traceRay(ray)) |hit| {
+            return hit.normal;
         }
 
-        return vec3(0, 0, 0);
+        return getEnvColor(ray);
     }
 
     fn getPixelColor(scene: Scene, x: u16, y: u16) RGB
