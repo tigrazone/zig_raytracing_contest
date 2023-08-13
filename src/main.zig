@@ -109,11 +109,11 @@ const Vec3 = struct {
     }
 
     fn clamp(self: Vec3, min: f32, max: f32) Vec3 {
-        return .{ .data = @min(@max(self.data, @splat(3, min)), @splat(3, max)) };
+        return .{ .data = @min(@max(self.data, @as(@Vector(3, f32), @splat(min))), @as(@Vector(3, f32), @splat(max))) };
     }
 
     fn scale(self: Vec3, s: f32) Vec3 {
-        return .{ .data = self.data * @splat(3, s) };
+        return .{ .data = self.data * @as(@Vector(3, f32), @splat(s)) };
     }
 
     fn toRGB(self: Vec3) RGB {
@@ -155,11 +155,11 @@ fn dot(a: Vec3, b: Vec3) f32 {
 }
 
 fn cross(a: Vec3, b: Vec3) Vec3 {
-    return .{ .data = .{
-        a.y()*b.z() - a.z()*b.y(),
-        a.z()*b.x() - a.x()*b.z(),
-        a.x()*b.y() - a.y()*b.x(),
-    }};
+    const tmp0 = @shuffle(f32, a.data, a.data ,@Vector(3, i32){1,2,0});
+    const tmp1 = @shuffle(f32, b.data, b.data ,@Vector(3, i32){2,0,1});
+    const tmp2 = @shuffle(f32, a.data, a.data ,@Vector(3, i32){2,0,1});
+    const tmp3 = @shuffle(f32, b.data, b.data ,@Vector(3, i32){1,2,0});
+    return .{ .data = tmp0*tmp1-tmp2*tmp3 };
 }
 
 fn vec3(x: f32, y: f32, z: f32) Vec3 {
