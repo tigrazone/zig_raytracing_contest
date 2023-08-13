@@ -178,26 +178,26 @@ test "vector length" {
     try std.testing.expectApproxEqAbs(v.length(), 102.21281720019266, 0.0001);
 }
 
-const Matrix4 = struct {
+const Mat4 = struct {
     data: [16]f32,
 
-    fn get(self: Matrix4, row: usize, column: usize) f32 {
+    fn get(self: Mat4, row: usize, column: usize) f32 {
         return self.data[column*4+row];
     }
 
-    fn set(self: *Matrix4, row: usize, column: usize, val: f32) void {
+    fn set(self: *Mat4, row: usize, column: usize, val: f32) void {
         self.data[column*4+row] = val;
     }
 
-    fn identity() Matrix4 {
-        var result: Matrix4 = .{ .data = [_]f32{0} ** 16 };
+    fn identity() Mat4 {
+        var result: Mat4 = .{ .data = [_]f32{0} ** 16 };
         for (0..4) |i| {
             result.data[i*4+i] = 1;
         }
         return result;
     }
 
-    fn translation(t: [3]f32) Matrix4 {
+    fn translation(t: [3]f32) Mat4 {
         return .{ .data = .{
             1, 0, 0, 0,
             0, 1, 0, 0,
@@ -206,7 +206,7 @@ const Matrix4 = struct {
         }};
     }
 
-    fn rotation(q: [4]f32) Matrix4 {
+    fn rotation(q: [4]f32) Mat4 {
         const x = q[0];
         const y = q[1];
         const z = q[2];
@@ -230,7 +230,7 @@ const Matrix4 = struct {
         }};
     }
 
-    fn scale(s: [3]f32) Matrix4 {
+    fn scale(s: [3]f32) Mat4 {
         return .{ .data = .{
             s[0], 0, 0, 0,
             0, s[1], 0, 0,
@@ -239,7 +239,7 @@ const Matrix4 = struct {
         }};
     }
 
-    fn col3(self: Matrix4, column: usize) Vec3 {
+    fn col3(self: Mat4, column: usize) Vec3 {
         return vec3(
             self.get(0, column),
             self.get(1, column),
@@ -247,7 +247,7 @@ const Matrix4 = struct {
         );
     }
 
-    fn transformPosition(self: Matrix4, v: Vec3) Vec3 {
+    fn transformPosition(self: Mat4, v: Vec3) Vec3 {
         return .{ .data =
             self.col3(0).scale(v.x()).data +
             self.col3(1).scale(v.y()).data +
@@ -255,10 +255,18 @@ const Matrix4 = struct {
             self.col3(3).data
         };
     }
+
+    fn transformDirection(self: Mat4, v: Vec3) Vec3 {
+        return .{ .data =
+            self.col3(0).scale(v.x()).data +
+            self.col3(1).scale(v.y()).data +
+            self.col3(2).scale(v.z()).data
+        };
+    }
 };
 
-fn mul(a: Matrix4, b: Matrix4) Matrix4 {
-    var result: Matrix4 = undefined;
+fn mul(a: Mat4, b: Mat4) Mat4 {
+    var result: Mat4 = undefined;
     for (0..4) |column| {
         for (0..4) |row| {
             var acc: f32 = 0;
@@ -271,23 +279,23 @@ fn mul(a: Matrix4, b: Matrix4) Matrix4 {
     return result;
 }
 
-fn getNodeTransform(node: *c.cgltf_node) !Matrix4 {
-    var matrix: Matrix4 = undefined;
+fn getNodeTransform(node: *c.cgltf_node) !Mat4 {
+    var matrix: Mat4 = undefined;
     if (node.has_matrix != 0) {
         matrix = .{ .data = node.matrix };
     } else if (node.has_translation != 0 or node.has_rotation != 0 or node.has_scale != 0) {
-        matrix = Matrix4.identity();
+        matrix = Mat4.identity();
         if (node.has_translation != 0) {
-            matrix = mul(matrix, Matrix4.translation(node.translation));
+            matrix = mul(matrix, Mat4.translation(node.translation));
         }
         if (node.has_rotation != 0) {
-            matrix = mul(matrix, Matrix4.rotation(node.rotation));
+            matrix = mul(matrix, Mat4.rotation(node.rotation));
         }
         if (node.has_scale != 0) {
-            matrix = mul(matrix, Matrix4.scale(node.scale));
+            matrix = mul(matrix, Mat4.scale(node.scale));
         }
     } else {
-        matrix = Matrix4.identity();
+        matrix = Mat4.identity();
     }
     if (node.parent == null) {
         return matrix;
@@ -348,6 +356,8 @@ const Camera = struct {
             h = height orelse @intFromFloat(@as(f32, @floatFromInt(width.?)) / aspect_ratio);
         }
 
+        std.log.info("Pixels count: {}", .{w*h});
+
         const f_w: f32 = @floatFromInt(w);
         const f_h: f32 = @floatFromInt(h);
 
@@ -397,7 +407,7 @@ const Ray = struct {
     }
 };
 
-fn rayTriangleIntersection(ray: Ray, v0: Vec3, v1: Vec3, v2: Vec3, t_min: f32, t_max: f32) ?Hit
+fn rayTriangleIntersection(ray: Ray, v0: Vec3, v1: Vec3, v2: Vec3, t_min: f32, t_max: f32) ?f32
 {
     const v0v1 = subtract(v1, v0);
     const v0v2 = subtract(v2, v0);
@@ -433,28 +443,31 @@ fn rayTriangleIntersection(ray: Ray, v0: Vec3, v1: Vec3, v2: Vec3, t_min: f32, t
     if (dot(N, cross(edge1, vp1)) < 0) return null;
     if (dot(N, cross(edge2, vp2)) < 0) return null;
 
-    return .{
-        .p = P,
-        .normal = N.normalize(),
-        .t = t,
-    };
+    return t;
 }
 
 const Triangle = struct {
-    v0: Vec3,
-    v1: Vec3,
-    v2: Vec3,
+    v: [3]Vec3,
 };
 
 const Hit = struct {
-    p: Vec3,
-    normal: Vec3,
     t: f32,
+    triangle_idx: usize,
+};
+
+const Vertex = struct {
+    normal: Vec3,
+    texcoord: [2]f32,
+};
+
+const TriangleData = struct {
+    v: [3]Vertex,
 };
 
 const Scene = struct {
     camera: Camera,
     triangles: []Triangle,
+    triangles_data: []TriangleData,
 
     fn findMeshNode(gltf_data: *c.cgltf_data) !*c.cgltf_node {
         for (0..gltf_data.nodes_count) |node_idx| {
@@ -464,6 +477,73 @@ const Scene = struct {
             }
         }
         return error.NoMeshFound; // TODO: implement recursive search / deal with multiple meshes
+    }
+
+    fn Accessor(comptime T: type) type {
+        return struct {
+            const Self = @This();
+
+            accessor: *c.cgltf_accessor,
+            base_address: [*]u8,
+
+            fn init(accessor: *c.cgltf_accessor) Self
+            {
+                switch (T) {
+                    Vec3 => {
+                        std.debug.assert(accessor.type == c.cgltf_type_vec3);
+                        std.debug.assert(accessor.component_type == c.cgltf_component_type_r_32f);
+                    },
+                    [2]f32 => {
+                        std.debug.assert(accessor.type == c.cgltf_type_vec2);
+                        std.debug.assert(accessor.component_type == c.cgltf_component_type_r_32f);
+                    },
+                    u16 => {
+                        std.debug.assert(accessor.type == c.cgltf_type_scalar);
+                        std.debug.assert(accessor.component_type == c.cgltf_component_type_r_16u);
+                    },
+                    else => {
+                        @compileError("Implement me");
+                    }
+                }
+                return .{
+                    .accessor = accessor,
+                    .base_address =
+                        @as([*]u8, @ptrCast(accessor.buffer_view.*.buffer.*.data)) +
+                        accessor.buffer_view.*.offset +
+                        accessor.offset
+                };
+            }
+
+            fn num(self: Self) usize { return self.accessor.count; }
+            fn at(self: Self, idx: usize) T {
+                switch (T) {
+                    Vec3 => {
+                        const ptr: [*]f32 = @ptrCast(@alignCast(self.base_address + idx*self.accessor.stride));
+                        return vec3(ptr[0],ptr[1],ptr[2]);
+                    },
+                    [2]f32 => {
+                        const ptr: [*]f32 = @ptrCast(@alignCast(self.base_address + idx*self.accessor.stride));
+                        return ptr[0..2].*;
+                    },
+                    u16 => {
+                        const ptr: [*]u16 = @ptrCast(@alignCast(self.base_address + idx*self.accessor.stride));
+                        return ptr[0];
+                    },
+                    else => {
+                        @compileError("Implement me");
+                    }
+                }
+            }
+        };
+    }
+
+    fn findPrimitiveAttribute(primitive: c.cgltf_primitive, comptime attr_type: c.cgltf_attribute_type) !*c.cgltf_accessor {
+        for (0..primitive.attributes_count) |i| {
+            if (primitive.attributes[i].type == attr_type) {
+                return primitive.attributes[i].data;
+            }
+        }
+        return error.AttributeNotFound;
     }
 
     fn load(args: CmdlineArgs, allocator: std.mem.Allocator) !Scene {
@@ -481,74 +561,67 @@ const Scene = struct {
         const primitive = mesh.*.primitives[0];
         std.debug.assert(primitive.type == c.cgltf_primitive_type_triangles);
 
-        const positions: *c.cgltf_accessor = blk: {
-            for (0..primitive.attributes_count) |i| {
-                if (primitive.attributes[i].type == c.cgltf_attribute_type_position) {
-                    break :blk primitive.attributes[i].data;
-                }
-            }
-            @panic("imlement me");
-        };
-        const indices: *c.cgltf_accessor = primitive.indices;
+        const positions = Accessor(Vec3).init(try findPrimitiveAttribute(primitive, c.cgltf_attribute_type_position));
+        const normals = Accessor(Vec3).init(try findPrimitiveAttribute(primitive, c.cgltf_attribute_type_normal));
+        const texcoords = Accessor([2]f32).init(try findPrimitiveAttribute(primitive, c.cgltf_attribute_type_texcoord));
+        const indices = Accessor(u16).init(primitive.indices);
 
-        const vertex_address =
-            @as([*]u8, @ptrCast(positions.buffer_view.*.buffer.*.data)) +
-            positions.buffer_view.*.offset +
-            positions.offset;
+        const triangles_count = indices.num() / 3;
 
-        const index_address =
-            @as([*]u8, @ptrCast(indices.buffer_view.*.buffer.*.data)) +
-            indices.buffer_view.*.offset +
-            indices.offset;
-
-        std.debug.assert(positions.type == c.cgltf_type_vec3);
-        std.debug.assert(indices.type == c.cgltf_type_scalar);
-        std.debug.assert(positions.component_type == c.cgltf_component_type_r_32f);
-        std.debug.assert(indices.component_type == c.cgltf_component_type_r_16u);
-
-        const triangles_count = indices.count / 3;
         const triangles = try allocator.alloc(Triangle, triangles_count);
         errdefer allocator.free(triangles);
+        const triangles_data = try allocator.alloc(TriangleData, triangles_count);
+        errdefer allocator.free(triangles_data);
+
+        std.log.info("Triangle count: {}", .{triangles_count});
 
         const matrix = try getNodeTransform(mesh_node);
 
         for (0..triangles_count) |triangle_idx| {
-            const index: [*]u16 = @ptrCast(@alignCast(index_address + triangle_idx*3*indices.stride));
-
-            const pos0: [*]f32 = @ptrCast(@alignCast(vertex_address + index[0]*positions.stride));
-            const pos1: [*]f32 = @ptrCast(@alignCast(vertex_address + index[1]*positions.stride));
-            const pos2: [*]f32 = @ptrCast(@alignCast(vertex_address + index[2]*positions.stride));
-
-            triangles[triangle_idx] = .{
-                .v0 = matrix.transformPosition(vec3(pos0[0], pos0[1], pos0[2])),
-                .v1 = matrix.transformPosition(vec3(pos1[0], pos1[1], pos1[2])),
-                .v2 = matrix.transformPosition(vec3(pos2[0], pos2[1], pos2[2])),
-            };
+            for (0..3) |i| {
+                const index_idx = triangle_idx*3+i;
+                const vertex_idx = indices.at(index_idx);
+                triangles[triangle_idx].v[i] = matrix.transformPosition(positions.at(vertex_idx));
+                triangles_data[triangle_idx].v[i] = .{
+                    .normal = matrix.transformDirection(normals.at(vertex_idx)).normalize(), // TODO: use adjusent matrix
+                    .texcoord = texcoords.at(vertex_idx),
+                };
+            }
         }
 
         return .{
             .camera = try Camera.init(gltf_data.?, args.width, args.height),
             .triangles = triangles,
+            .triangles_data = triangles_data,
         };
     }
 
     fn deinit(self: Scene, allocator: std.mem.Allocator) void {
         allocator.free(self.triangles);
+        allocator.free(self.triangles_data);
     }
 
     fn traceRay(scene: Scene, ray: Ray) ?Hit
     {
-        var t = std.math.inf(f32);
-        var result: ?Hit = null;
-        for (scene.triangles) |triangle| {
-            if (rayTriangleIntersection(ray, triangle.v0, triangle.v1, triangle.v2, 0, t)) |hit| {
-                if (hit.t < t) {
-                    result = hit;
-                    t = hit.t;
+        var nearest_t = std.math.inf(f32);
+        var nearest_triangle_idx: usize = undefined;
+        var found = false;
+        for (scene.triangles, 0..) |triangle, triangle_idx| {
+            if (rayTriangleIntersection(ray, triangle.v[0], triangle.v[1], triangle.v[2], 0, nearest_t)) |t| {
+                if (nearest_t > t) {
+                    nearest_t = t;
+                    nearest_triangle_idx = triangle_idx;
+                    found = true;
                 }
             }
         }
-        return result;
+        if (found) {
+            return .{
+                .t = nearest_t,
+                .triangle_idx = nearest_triangle_idx,
+            };
+        }
+        return null;
     }
 
     fn getEnvColor(ray: Ray) Vec3 {
@@ -561,7 +634,9 @@ const Scene = struct {
 
     fn getSampleColor(scene: Scene, ray: Ray) Vec3 {
         if (scene.traceRay(ray)) |hit| {
-            return hit.normal;
+            // const uv: [2]f32 = scene.triangles_data[hit.triangle_idx].getUV(hit.barycentric);
+            // return vec3(uv[0], uv[1], 0);
+            return scene.triangles_data[hit.triangle_idx].v[0].normal;
         }
 
         return getEnvColor(ray);
