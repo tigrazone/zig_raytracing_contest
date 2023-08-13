@@ -262,6 +262,8 @@ const Triangle = struct {
 
 const Hit = struct {
     t: f32,
+    u: f32,
+    v: f32,
     triangle_idx: usize,
 };
 
@@ -325,64 +327,67 @@ const World = struct {
         allocator.free(self.triangles_data);
     }
 
-    fn rayTriangleIntersection(ray: Ray, v0: Vec3, v1: Vec3, v2: Vec3, t_min: f32, t_max: f32) ?f32
+    fn rayTriangleIntersection(ray: Ray, v0: Vec3, v1: Vec3, v2: Vec3, triangle_idx: usize) ?Hit
     {
+        // TODO: Havel and Herout
+        // https://stackoverflow.com/questions/13163129/ray-triangle-intersection
+        // https://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.159.5135&rep=rep1&type=pdf
+
         const v0v1 = subtract(v1, v0);
         const v0v2 = subtract(v2, v0);
-        const N = cross(v0v1, v0v2);
+        const pvec = cross(ray.dir, v0v2);
+        const det = dot(v0v1, pvec);
 
         const epsilon = 0.00000001; // TODO
 
-        // Step 1: finding P
+        // // if the determinant is negative, the triangle is 'back facing'
+        // // if the determinant is close to 0, the ray misses the triangle
+        if (det < epsilon) return null;
 
-        const NdotRayDir = dot(N, ray.dir);
-        if (@fabs(NdotRayDir) < epsilon) {
-            return null; // they are parallel, so they don't intersect!
-        }
+        const inv_det = 1.0 / det;
 
-        const d = -dot(N, v0);
-        const t = -(dot(N, ray.orig) + d) / NdotRayDir;
+        const tvec = subtract(ray.orig, v0);
+        const u = dot(tvec, pvec) * inv_det;
+        if (u < 0 or u > 1) return null;
 
-        if (t < t_min or t > t_max) return null;
+        const qvec = cross(tvec, v0v1);
+        const v = dot(ray.dir, qvec) * inv_det;
+        if (v < 0 or u+v > 1) return null;
 
-        const P = ray.at(t);
+        const t = dot(v0v2, qvec) * inv_det;
 
-        // Step 2: inside-outside test
-
-        const edge0 = subtract(v1, v0);
-        const edge1 = subtract(v2, v1);
-        const edge2 = subtract(v0, v2);
-
-        const vp0 = subtract(P, v0);
-        const vp1 = subtract(P, v1);
-        const vp2 = subtract(P, v2);
-
-        if (dot(N, cross(edge0, vp0)) < 0) return null;
-        if (dot(N, cross(edge1, vp1)) < 0) return null;
-        if (dot(N, cross(edge2, vp2)) < 0) return null;
-
-        return t;
+        return .{
+            .t = t,
+            .u = u,
+            .v = v,
+            .triangle_idx = triangle_idx,
+        };
     }
 
     fn traceRay(world: World, ray: Ray) ?Hit
     {
-        var nearest_t = std.math.inf(f32);
-        var nearest_triangle_idx: usize = undefined;
+        var nearest_hit = Hit{
+            .t = std.math.inf(f32),
+            .u = undefined,
+            .v = undefined,
+            .triangle_idx = undefined,
+        };
         var found = false;
-        for (world.triangles, 0..) |triangle, triangle_idx| {
-            if (rayTriangleIntersection(ray, triangle.v[0], triangle.v[1], triangle.v[2], 0, nearest_t)) |t| {
-                if (nearest_t > t) {
-                    nearest_t = t;
-                    nearest_triangle_idx = triangle_idx;
+        for (world.triangles, 0..) |triangle, triangle_idx|
+        {
+            const result = rayTriangleIntersection(ray,
+                triangle.v[0], triangle.v[1], triangle.v[2],
+                triangle_idx
+            );
+            if (result) |hit| {
+                if (nearest_hit.t > hit.t) {
+                    nearest_hit = hit;
                     found = true;
                 }
             }
         }
         if (found) {
-            return .{
-                .t = nearest_t,
-                .triangle_idx = nearest_triangle_idx,
-            };
+            return nearest_hit;
         }
         return null;
     }
@@ -397,9 +402,10 @@ const World = struct {
 
     fn getSampleColor(world: World, ray: Ray) Vec3 {
         if (world.traceRay(ray)) |hit| {
-            // const uv: [2]f32 = world.triangles_data[hit.triangle_idx].getUV(hit.barycentric);
-            // return vec3(uv[0], uv[1], 0);
-            return world.triangles_data[hit.triangle_idx].v[0].normal;
+            const v = world.triangles_data[hit.triangle_idx].v;
+            return v[0].normal.scale(1 - hit.u - hit.v)
+                .add(v[1].normal.scale(hit.u))
+                .add(v[2].normal.scale(hit.v));
         }
 
         return getEnvColor(ray);
