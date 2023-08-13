@@ -12,6 +12,7 @@ const subtract = Vec3.subtract;
 const add = Vec3.add;
 
 const c = @cImport({
+    @cInclude("stb/stb_image.h");
     @cInclude("stb/stb_image_write.h");
     @cInclude("cgltf/cgltf.h");
 });
@@ -38,7 +39,7 @@ fn CGLTF_CHECK(result: c.cgltf_result) !void {
     }
 }
 
-fn getNodeTransform(node: *c.cgltf_node) !Mat4 {
+fn getNodeTransform(node: *const c.cgltf_node) !Mat4 {
     var matrix: Mat4 = undefined;
     if (node.has_matrix != 0) {
         matrix = .{ .data = node.matrix };
@@ -71,16 +72,6 @@ fn findCameraNode(gltf_data: *c.cgltf_data) !*c.cgltf_node {
         }
     }
     return error.CameraNodeNotFound; // TODO: implement recursive search / deal with multiple instances of the same camera
-}
-
-fn findMeshNode(gltf_data: *c.cgltf_data) !*c.cgltf_node {
-    for (0..gltf_data.nodes_count) |node_idx| {
-        const node: *c.cgltf_node = gltf_data.nodes + node_idx;
-        if (node.mesh != null) {
-            return node;
-        }
-    }
-    return error.NoMeshFound; // TODO: implement recursive search / deal with multiple meshes
 }
 
 fn findPrimitiveAttribute(primitive: c.cgltf_primitive, comptime attr_type: c.cgltf_attribute_type) !*c.cgltf_accessor {
@@ -280,39 +271,57 @@ const World = struct {
     triangles: []Triangle,
     triangles_data: []TriangleData,
 
+    fn calcTriangles(gltf_data: *c.cgltf_data) usize {
+        var result: usize = 0;
+        for (gltf_data.nodes[0..gltf_data.nodes_count]) |node| {
+            if (node.mesh != null) {
+                for (node.mesh.*.primitives[0..node.mesh.*.primitives_count]) |primitive| {
+                    result += primitive.indices.*.count / 3;
+                }
+            }
+        }
+        return result;
+    }
+
     fn init(gltf_data: *c.cgltf_data, allocator: std.mem.Allocator) !World {
-        const mesh_node = try findMeshNode(gltf_data);
+        const total_triangles_count = calcTriangles(gltf_data);
+        std.log.info("Triangle count: {}", .{total_triangles_count});
 
-        const mesh = mesh_node.mesh;
-        std.debug.assert(mesh.*.primitives_count == 1);
-        const primitive = mesh.*.primitives[0];
-        std.debug.assert(primitive.type == c.cgltf_primitive_type_triangles);
-
-        const positions = Accessor(Vec3).init(try findPrimitiveAttribute(primitive, c.cgltf_attribute_type_position));
-        const normals = Accessor(Vec3).init(try findPrimitiveAttribute(primitive, c.cgltf_attribute_type_normal));
-        const texcoords = Accessor([2]f32).init(try findPrimitiveAttribute(primitive, c.cgltf_attribute_type_texcoord));
-        const indices = Accessor(u16).init(primitive.indices);
-
-        const triangles_count = indices.num() / 3;
-
-        const triangles = try allocator.alloc(Triangle, triangles_count);
+        const triangles = try allocator.alloc(Triangle, total_triangles_count);
         errdefer allocator.free(triangles);
-        const triangles_data = try allocator.alloc(TriangleData, triangles_count);
+        const triangles_data = try allocator.alloc(TriangleData, total_triangles_count);
         errdefer allocator.free(triangles_data);
 
-        std.log.info("Triangle count: {}", .{triangles_count});
+        var global_triangle_counter: usize = 0;
 
-        const matrix = try getNodeTransform(mesh_node);
+        for (gltf_data.nodes[0..gltf_data.nodes_count]) |node| {
+            if (node.mesh != null) {
+                for (node.mesh.*.primitives[0..node.mesh.*.primitives_count]) |primitive|
+                {
+                    std.debug.assert(primitive.type == c.cgltf_primitive_type_triangles);
 
-        for (0..triangles_count) |triangle_idx| {
-            for (0..3) |i| {
-                const index_idx = triangle_idx*3+i;
-                const vertex_idx = indices.at(index_idx);
-                triangles[triangle_idx].v[i] = matrix.transformPosition(positions.at(vertex_idx));
-                triangles_data[triangle_idx].v[i] = .{
-                    .normal = matrix.transformDirection(normals.at(vertex_idx)).normalize(), // TODO: use adjusent matrix
-                    .texcoord = texcoords.at(vertex_idx),
-                };
+                    const positions = Accessor(Vec3).init(try findPrimitiveAttribute(primitive, c.cgltf_attribute_type_position));
+                    const normals = Accessor(Vec3).init(try findPrimitiveAttribute(primitive, c.cgltf_attribute_type_normal));
+                    const texcoords = Accessor([2]f32).init(try findPrimitiveAttribute(primitive, c.cgltf_attribute_type_texcoord));
+                    const indices = Accessor(u16).init(primitive.indices);
+
+                    const triangles_count = indices.num() / 3;
+
+                    const matrix = try getNodeTransform(&node);
+
+                    for (0..triangles_count) |triangle_idx| {
+                        for (0..3) |i| {
+                            const index_idx = triangle_idx*3+i;
+                            const vertex_idx = indices.at(index_idx);
+                            triangles[global_triangle_counter].v[i] = matrix.transformPosition(positions.at(vertex_idx));
+                            triangles_data[global_triangle_counter].v[i] = .{
+                                .normal = matrix.transformDirection(normals.at(vertex_idx)).normalize(), // TODO: use adjusent matrix
+                                .texcoord = texcoords.at(vertex_idx),
+                            };
+                        }
+                        global_triangle_counter += 1;
+                    }
+                }
             }
         }
 
@@ -380,7 +389,7 @@ const World = struct {
                 triangle_idx
             );
             if (result) |hit| {
-                if (nearest_hit.t > hit.t) {
+                if (nearest_hit.t > hit.t and hit.t > 0) {
                     nearest_hit = hit;
                     found = true;
                 }
