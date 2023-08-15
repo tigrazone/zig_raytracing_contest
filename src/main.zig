@@ -248,7 +248,17 @@ const Ray = struct {
 };
 
 const Triangle = struct {
-    v: [3]Vec3,
+    v0: Vec3,
+    e1: Vec3,
+    e2: Vec3,
+
+    fn init(v0: Vec3, v1: Vec3, v2: Vec3) Triangle {
+        return .{
+            .v0 = v0,
+            .e1 = subtract(v1, v0),
+            .e2 = subtract(v2, v0),
+        };
+    }
 };
 
 const Hit = struct {
@@ -310,15 +320,17 @@ const World = struct {
                     const matrix = try getNodeTransform(&node);
 
                     for (0..triangles_count) |triangle_idx| {
+                        var pos: [3]Vec3 = undefined;
                         for (0..3) |i| {
                             const index_idx = triangle_idx*3+i;
                             const vertex_idx = indices.at(index_idx);
-                            triangles[global_triangle_counter].v[i] = matrix.transformPosition(positions.at(vertex_idx));
+                            pos[i] = matrix.transformPosition(positions.at(vertex_idx));
                             triangles_data[global_triangle_counter].v[i] = .{
                                 .normal = matrix.transformDirection(normals.at(vertex_idx)).normalize(), // TODO: use adjusent matrix
                                 .texcoord = texcoords.at(vertex_idx),
                             };
                         }
+                        triangles[global_triangle_counter] = Triangle.init(pos[0], pos[1], pos[2]);
                         global_triangle_counter += 1;
                     }
                 }
@@ -336,16 +348,14 @@ const World = struct {
         allocator.free(self.triangles_data);
     }
 
-    fn rayTriangleIntersection(ray: Ray, v0: Vec3, v1: Vec3, v2: Vec3, triangle_idx: usize) ?Hit
+    fn rayTriangleIntersection(ray: Ray, v0: Vec3, e1: Vec3, e2: Vec3, triangle_idx: usize) ?Hit
     {
         // TODO: Havel and Herout
         // https://stackoverflow.com/questions/13163129/ray-triangle-intersection
         // https://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.159.5135&rep=rep1&type=pdf
 
-        const v0v1 = subtract(v1, v0);
-        const v0v2 = subtract(v2, v0);
-        const pvec = cross(ray.dir, v0v2);
-        const det = dot(v0v1, pvec);
+        const pvec = cross(ray.dir, e2);
+        const det = dot(e1, pvec);
 
         const epsilon = 0.00000001; // TODO
 
@@ -359,11 +369,11 @@ const World = struct {
         const u = dot(tvec, pvec) * inv_det;
         if (u < 0 or u > 1) return null;
 
-        const qvec = cross(tvec, v0v1);
+        const qvec = cross(tvec, e1);
         const v = dot(ray.dir, qvec) * inv_det;
         if (v < 0 or u+v > 1) return null;
 
-        const t = dot(v0v2, qvec) * inv_det;
+        const t = dot(e2, qvec) * inv_det;
 
         return .{
             .t = t,
@@ -385,7 +395,7 @@ const World = struct {
         for (world.triangles, 0..) |triangle, triangle_idx|
         {
             const result = rayTriangleIntersection(ray,
-                triangle.v[0], triangle.v[1], triangle.v[2],
+                triangle.v0, triangle.e1, triangle.e2,
                 triangle_idx
             );
             if (result) |hit| {
