@@ -155,8 +155,8 @@ fn Accessor(comptime T: type) type {
 // =====================================================================================
 
 const Camera = struct {
-    w: u32,
-    h: u32,
+    w: usize,
+    h: usize,
     origin: Vec3,
     lower_left_corner: Vec3,
     right: Vec3,
@@ -383,34 +383,6 @@ const World = struct {
         };
     }
 
-    fn traceRay(world: World, ray: Ray) ?Hit
-    {
-        var nearest_hit = Hit{
-            .t = std.math.inf(f32),
-            .u = undefined,
-            .v = undefined,
-            .triangle_idx = undefined,
-        };
-        var found = false;
-        for (world.triangles, 0..) |triangle, triangle_idx|
-        {
-            const result = rayTriangleIntersection(ray,
-                triangle.v0, triangle.e1, triangle.e2,
-                triangle_idx
-            );
-            if (result) |hit| {
-                if (nearest_hit.t > hit.t and hit.t > 0) {
-                    nearest_hit = hit;
-                    found = true;
-                }
-            }
-        }
-        if (found) {
-            return nearest_hit;
-        }
-        return null;
-    }
-
     fn getEnvColor(ray: Ray) Vec3 {
         const t = 0.5*(ray.dir.y()+1.0);
         return add(
@@ -419,21 +391,52 @@ const World = struct {
         );
     }
 
-    fn getSampleColor(world: World, ray: Ray) Vec3 {
-        if (world.traceRay(ray)) |hit| {
-            const v = world.triangles_data[hit.triangle_idx].v;
-            return v[0].normal.scale(1 - hit.u - hit.v)
-                .add(v[1].normal.scale(hit.u))
-                .add(v[2].normal.scale(hit.v));
+    fn render(world: World, batch: []Sample) void {
+        inline for (0..BATCH_SIZE) |i| {
+            batch[i].hit.t = std.math.inf(f32);
         }
-
-        return getEnvColor(ray);
+        for (world.triangles, 0..) |triangle, triangle_idx|
+        {
+            inline for (0..BATCH_SIZE) |i| {
+                const sample = &batch[i];
+                const result = rayTriangleIntersection(sample.ray,
+                    triangle.v0, triangle.e1, triangle.e2,
+                    triangle_idx
+                );
+                if (result) |hit| {
+                    if (sample.hit.t > hit.t and hit.t > 0) {
+                        sample.hit = hit;
+                    }
+                }
+            }
+        }
+        inline for (0..BATCH_SIZE) |i| {
+            const sample = &batch[i];
+            if (sample.hit.t < std.math.inf(f32)) {
+                const v = world.triangles_data[sample.hit.triangle_idx].v;
+                sample.color = v[0].normal.scale(1 - sample.hit.u - sample.hit.v)
+                    .add(v[1].normal.scale(sample.hit.u))
+                    .add(v[2].normal.scale(sample.hit.v));
+            }
+            else {
+                sample.color = getEnvColor(sample.ray);
+            }
+        }
     }
+};
+
+const BATCH_SIZE = 64;
+
+const Sample = struct {
+    ray: Ray,
+    hit: Hit,
+    color: Vec3,
 };
 
 const Scene = struct {
     camera: Camera,
     world: World,
+    samples: []Sample,
 
     fn load(args: CmdlineArgs, allocator: std.mem.Allocator) !Scene {
         const options = std.mem.zeroes(c.cgltf_options);
@@ -443,21 +446,47 @@ const Scene = struct {
 
         try CGLTF_CHECK(c.cgltf_load_buffers(&options, gltf_data, std.fs.path.dirname(args.in).?.ptr));
 
+        const camera = try Camera.init(gltf_data.?, args.width, args.height);
+        const world = try World.init(gltf_data.?, allocator);
+
+        var samples = try allocator.alloc(Sample, std.mem.alignForward(usize, camera.w * camera.h, BATCH_SIZE));
+        errdefer allocator.free(samples);
+
+        for (0..camera.h) |y| {
+            for (0..camera.w) |x| {
+                samples[y*camera.w+x] = .{
+                    .ray = camera.getRandomRay(@intCast(x), @intCast(y)),
+                    .color = undefined,
+                    .hit = undefined,
+                };
+            }
+        }
+
         return .{
-            .camera = try Camera.init(gltf_data.?, args.width, args.height),
-            .world = try World.init(gltf_data.?, allocator),
+            .camera = camera,
+            .world = world,
+            .samples = samples,
         };
     }
 
     fn deinit(self: Scene, allocator: std.mem.Allocator) void {
         self.world.deinit(allocator);
+        allocator.free(self.samples);
+    }
+
+    fn render(self: Scene) void {
+        var begin: usize = 0;
+        while (begin != self.samples.len) {
+            const end = begin + BATCH_SIZE;
+            const batch = self.samples[begin..end];
+            self.world.render(batch);
+            begin = end;
+        }
     }
 
     fn getPixelColor(self: Scene, x: u16, y: u16) RGB
     {
-        const ray = self.camera.getRandomRay(x, y);
-        const color = self.world.getSampleColor(ray);
-        return color.sqrt().toRGB();
+        return self.samples[y*self.camera.w+x].color.sqrt().toRGB();
     }
 };
 
@@ -548,6 +577,8 @@ pub fn main() !void {
 
     const scene = try Scene.load(args, allocator);
     defer scene.deinit(allocator);
+
+    scene.render();
 
     const w = scene.camera.w;
     const h = scene.camera.h;
