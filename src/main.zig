@@ -275,11 +275,66 @@ const Vertex = struct {
 
 const TriangleData = struct {
     v: [3]Vertex,
+
+    fn interpolate(self: TriangleData, comptime field_name: []const u8, u: f32, v: f32) @TypeOf(@field(self.v[0], field_name)) {
+        const v0 = @field(self.v[0], field_name);
+        const v1 = @field(self.v[1], field_name);
+        const v2 = @field(self.v[2], field_name);
+        switch (@TypeOf(@field(self.v[0], field_name))) {
+            Vec3 => {
+                return v0.scale(1-u-v).add(v1.scale(u)).add(v2.scale(v));
+            },
+            [2]f32 => {
+                return .{
+                    v0[0]*(1-u-v) + v1[0]*u + v2[0]*v,
+                    v0[1]*(1-u-v) + v1[1]*u + v2[1]*v,
+                };
+            },
+            else => {
+                @compileError("Implement me");
+            }
+        }
+    }
+};
+
+const Image = struct {
+    data: [*]f32,
+    w: f32,
+    h: f32,
+    pitch: usize,
+
+    fn init(image: c.cgltf_image) Image {
+        const buffer: [*]u8 = @as([*]u8, @ptrCast(image.buffer_view.*.buffer.*.data)) + image.buffer_view.*.offset;
+        var w: c_int = 0;
+        var h: c_int = 0;
+        var channels: c_int = 0;
+        const data = c.stbi_loadf_from_memory(buffer, @intCast(image.buffer_view.*.size), &w, &h, &channels, 4);
+        return .{
+            .data = data,
+            .w = @floatFromInt(w),
+            .h = @floatFromInt(h),
+            .pitch = @intCast(w),
+        };
+    }
+
+    fn deinit(self: Image) void {
+        c.stbi_image_free(self.data);
+    }
+
+    fn sample(self: Image, u: f32, v: f32) Vec3 {
+        // TODO: move me into sampler and implement filtering
+        const x: usize = @intFromFloat(self.w * u);
+        const y: usize = @intFromFloat(self.h * v);
+        const pos = (y * self.pitch + x) * 4;
+        const color = vec3(self.data[pos], self.data[pos+1], self.data[pos+2]);
+        return color;
+    }
 };
 
 const World = struct {
     triangles: []Triangle,
     triangles_data: []TriangleData,
+    images: []Image,
 
     fn calcTriangles(gltf_data: *c.cgltf_data) usize {
         var result: usize = 0;
@@ -337,23 +392,31 @@ const World = struct {
             }
         }
 
+        const images = try allocator.alloc(Image, gltf_data.images_count);
+        errdefer allocator.free(images);
+
+        for (0..gltf_data.images_count) |i| {
+            images[i] = Image.init(gltf_data.images[i]);
+        }
+
         return .{
             .triangles = triangles,
             .triangles_data = triangles_data,
+            .images = images,
         };
     }
 
     fn deinit(self: World, allocator: std.mem.Allocator) void {
         allocator.free(self.triangles);
         allocator.free(self.triangles_data);
+        for (self.images) |*image| {
+            image.deinit();
+        }
+        allocator.free(self.images);
     }
 
     fn rayTriangleIntersection(ray: Ray, v0: Vec3, e1: Vec3, e2: Vec3, triangle_idx: usize) ?Hit
     {
-        // TODO: Havel and Herout
-        // https://stackoverflow.com/questions/13163129/ray-triangle-intersection
-        // https://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.159.5135&rep=rep1&type=pdf
-
         const pvec = cross(ray.dir, e2);
         const det = dot(e1, pvec);
 
@@ -413,10 +476,9 @@ const World = struct {
         inline for (0..BATCH_SIZE) |i| {
             const sample = &batch[i];
             if (sample.hit.t < std.math.inf(f32)) {
-                const v = world.triangles_data[sample.hit.triangle_idx].v;
-                sample.color = v[0].normal.scale(1 - sample.hit.u - sample.hit.v)
-                    .add(v[1].normal.scale(sample.hit.u))
-                    .add(v[2].normal.scale(sample.hit.v));
+                const triangle = world.triangles_data[sample.hit.triangle_idx];
+                const texcoord = triangle.interpolate("texcoord", sample.hit.u, sample.hit.v);
+                sample.color = world.images[0].sample(texcoord[0], texcoord[1]);
             }
             else {
                 sample.color = getEnvColor(sample.ray);
@@ -566,6 +628,9 @@ const CmdlineArgs = struct {
 
 pub fn main() !void {
     const start_time = std.time.nanoTimestamp();
+
+    c.stbi_set_flip_vertically_on_load(0);
+    c.stbi_set_flip_vertically_on_load_thread(0);
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer std.debug.assert(gpa.deinit() == .ok);
