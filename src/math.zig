@@ -1,15 +1,5 @@
 const std = @import("std");
-
-
-pub const RGB = struct {
-    r: u8,
-    g: u8,
-    b: u8,
-};
-
-test "RGB size should be 3" {
-    try std.testing.expect(@sizeOf(RGB) == 3);
-}
+const zigimg = @import("zigimg");
 
 pub const Vec3 = struct {
     data: @Vector(3, f32),
@@ -36,9 +26,9 @@ pub const Vec3 = struct {
         return .{ .data = .{_x, _y, _z}};
     }
 
-    pub fn sqrt(self: Vec3) Vec3 {
-        return .{ .data = @sqrt(self.data) };
-    }
+    // pub fn sqrt(self: Vec3) Vec3 {
+    //     return .{ .data = @sqrt(self.data) };
+    // }
 
     pub fn clamp(self: Vec3, min: f32, max: f32) Vec3 {
         return .{ .data = @min(@max(self.data, @as(@Vector(3, f32), @splat(min))), @as(@Vector(3, f32), @splat(max))) };
@@ -48,7 +38,7 @@ pub const Vec3 = struct {
         return .{ .data = self.data * @as(@Vector(3, f32), @splat(s)) };
     }
 
-    pub fn toRGB(self: Vec3) RGB {
+    pub fn toRGB(self: Vec3) zigimg.color.Rgb24 {
         const rgb = self.clamp(0.0, 0.999999).scale(256);
         return .{
             .r = @intFromFloat(rgb.data[0]),

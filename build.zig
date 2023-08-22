@@ -1,16 +1,5 @@
 const std = @import("std");
 
-fn linkEverything(b: *std.Build, module: *std.Build.Step.Compile) void {
-    _ = b;
-
-    module.linkLibC();
-    module.addIncludePath(.{.path = "libs"});
-    module.addCSourceFile(.{
-        .file = .{.path = "src/c_impl.c"},
-        .flags = &.{},
-    });
-}
-
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
 // runner.
@@ -35,13 +24,19 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    linkEverything(b, exe);
+    exe.linkLibC();
 
     const zgltf = b.anonymousDependency("libs/zgltf/", @import("libs/zgltf/build.zig"), .{
         .target = target,
         .optimize = optimize,
     });
     exe.addModule("zgltf", zgltf.module("zgltf"));
+
+    const zigimg = b.anonymousDependency("libs/zigimg/", @import("libs/zigimg/build.zig"), .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.addModule("zigimg", zigimg.module("zigimg"));
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
@@ -79,7 +74,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    linkEverything(b, unit_tests);
+    unit_tests.linkLibC();
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
 

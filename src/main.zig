@@ -3,7 +3,6 @@ const math = @import("math.zig");
 
 const Mat4 = math.Mat4;
 const Vec3 = math.Vec3;
-const RGB = math.RGB;
 
 const vec3 = Vec3.init;
 const dot = Vec3.dot;
@@ -11,12 +10,8 @@ const cross = Vec3.cross;
 const subtract = Vec3.subtract;
 const add = Vec3.add;
 
-const c = @cImport({
-    @cInclude("stb/stb_image.h");
-    @cInclude("stb/stb_image_write.h");
-});
-
 const Gltf = @import("zgltf");
+const zigimg = @import("zigimg");
 
 // =====================================================================================
 // =====================================================================================
@@ -217,12 +212,10 @@ const Triangle = struct {
     e1: Vec3,
     e2: Vec3,
 
-    fn init(v0: Vec3, v1: Vec3, v2: Vec3) Triangle {
-        return .{
-            .v0 = v0,
-            .e1 = subtract(v1, v0),
-            .e2 = subtract(v2, v0),
-        };
+    fn init(self: *Triangle, v0: Vec3, v1: Vec3, v2: Vec3) void {
+        self.v0 = v0;
+        self.e1 = subtract(v1, v0);
+        self.e2 = subtract(v2, v0);
     }
 };
 
@@ -240,6 +233,12 @@ const Vertex = struct {
 
 const TriangleData = struct {
     v: [3]Vertex,
+    img_idx: usize,
+
+    fn setMaterial(self: *TriangleData, gltf: Gltf, material_idx: ?Gltf.Index) void {
+        const material = gltf.data.materials.items[material_idx.?];
+        self.img_idx = material.metallic_roughness.base_color_texture.?.index;
+    }
 
     fn interpolate(self: TriangleData, comptime field_name: []const u8, u: f32, v: f32) @TypeOf(@field(self.v[0], field_name)) {
         const v0 = @field(self.v[0], field_name);
@@ -263,39 +262,37 @@ const TriangleData = struct {
 };
 
 const Image = struct {
-    data: [*]f32,
+    data: []zigimg.color.Colorf32,
     w: f32,
     h: f32,
-    pitch: usize,
+    w_int: usize,
 
-    fn init(gltf: Gltf, image: Gltf.Image) Image {
-        const buffer_view = gltf.data.buffer_views.items[image.buffer_view.?];
-        const buffer = gltf.data.buffers.items[buffer_view.buffer];
-        var w: c_int = 0;
-        var h: c_int = 0;
-        var channels: c_int = 0;
-        const data = c.stbi_loadf_from_memory(
-            buffer.data.?.ptr + buffer_view.byte_offset,
-            @intCast(buffer_view.byte_length),
-            &w, &h, &channels, 4);
+    fn init(allocator: std.mem.Allocator, image: Gltf.Image) !Image {
+        const im: *const zigimg.Image = @alignCast(@ptrCast(image.data.?));
+        const data = try allocator.alloc(zigimg.color.Colorf32, im.width * im.height * 4);
+        var iter = im.iterator();
+        while (iter.next()) |pixel| {
+            data[iter.current_index-1] = pixel;
+        }
         return .{
             .data = data,
-            .w = @floatFromInt(w),
-            .h = @floatFromInt(h),
-            .pitch = @intCast(w),
+            .w = @floatFromInt(im.width),
+            .h = @floatFromInt(im.height),
+            .w_int = im.width,
         };
     }
 
-    fn deinit(self: Image) void {
-        c.stbi_image_free(self.data);
+    fn frac(v: f32) f32 {
+        return @fabs(v - @trunc(v));
     }
 
     fn sample(self: Image, u: f32, v: f32) Vec3 {
         // TODO: move me into sampler and implement filtering
-        const x: usize = @intFromFloat(self.w * u);
-        const y: usize = @intFromFloat(self.h * v);
-        const pos = (y * self.pitch + x) * 4;
-        const color = vec3(self.data[pos], self.data[pos+1], self.data[pos+2]);
+        const x: usize = @intFromFloat(self.w * frac(u));
+        const y: usize = @intFromFloat(self.h * frac(v));
+        const pos = y * self.w_int + x;
+        const pixel = self.data[pos];
+        const color = vec3(pixel.r, pixel.g, pixel.b);
         return color;
     }
 };
@@ -319,14 +316,12 @@ const World = struct {
         return result;
     }
 
-    fn init(gltf: Gltf, allocator: std.mem.Allocator) !World {
+    fn init(gltf: Gltf, arena_allocator: std.mem.Allocator) !World {
         const total_triangles_count = calcTriangles(gltf);
         std.log.info("Triangle count: {}", .{total_triangles_count});
 
-        const triangles = try allocator.alloc(Triangle, total_triangles_count);
-        errdefer allocator.free(triangles);
-        const triangles_data = try allocator.alloc(TriangleData, total_triangles_count);
-        errdefer allocator.free(triangles_data);
+        const triangles = try arena_allocator.alloc(Triangle, total_triangles_count);
+        const triangles_data = try arena_allocator.alloc(TriangleData, total_triangles_count);
 
         var global_triangle_counter: usize = 0;
 
@@ -357,18 +352,17 @@ const World = struct {
                                 .texcoord = texcoords.at(vertex_idx),
                             };
                         }
-                        triangles[global_triangle_counter] = Triangle.init(pos[0], pos[1], pos[2]);
+                        triangles[global_triangle_counter].init(pos[0], pos[1], pos[2]);
+                        triangles_data[global_triangle_counter].setMaterial(gltf, primitive.material);
                         global_triangle_counter += 1;
                     }
                 }
             }
         }
 
-        const images = try allocator.alloc(Image, gltf.data.images.items.len);
-        errdefer allocator.free(images);
-
-        for (gltf.data.images.items, 0..) |image, i| {
-            images[i] = Image.init(gltf, image);
+        const images = try arena_allocator.alloc(Image, gltf.data.images.items.len);
+        for (images, 0..) |*image, i| {
+            image.* = try Image.init(arena_allocator, gltf.data.images.items[i]);
         }
 
         return .{
@@ -376,15 +370,6 @@ const World = struct {
             .triangles_data = triangles_data,
             .images = images,
         };
-    }
-
-    fn deinit(self: World, allocator: std.mem.Allocator) void {
-        allocator.free(self.triangles);
-        allocator.free(self.triangles_data);
-        for (self.images) |*image| {
-            image.deinit();
-        }
-        allocator.free(self.images);
     }
 
     fn rayTriangleIntersection(ray: Ray, v0: Vec3, e1: Vec3, e2: Vec3, triangle_idx: usize) ?Hit
@@ -450,7 +435,7 @@ const World = struct {
             if (sample.hit.t < std.math.inf(f32)) {
                 const triangle = world.triangles_data[sample.hit.triangle_idx];
                 const texcoord = triangle.interpolate("texcoord", sample.hit.u, sample.hit.v);
-                sample.color = world.images[0].sample(texcoord[0], texcoord[1]);
+                sample.color = world.images[triangle.img_idx].sample(texcoord[0], texcoord[1]);
             }
             else {
                 sample.color = getEnvColor(sample.ray);
@@ -487,26 +472,12 @@ const Scene = struct {
     world: World,
     samples: []Sample,
 
-    fn load(args: CmdlineArgs, allocator: std.mem.Allocator) !Scene {
-        var gltf = Gltf.init(allocator);
-        defer gltf.deinit();
-
-        const buf = try loadFile(args.in, allocator);
-        defer allocator.free(buf);
-
-        try gltf.parse(buf);
-
-        for (gltf.data.buffers.items, 0..) |*buffer, i| {
-            if (i == 0 and buffer.uri == null) {
-                buffer.data = gltf.glb_binary;
-            }
-        }
-
+    fn load(gltf: Gltf, args: CmdlineArgs, arena_allocator: std.mem.Allocator) !Scene {
         const camera = try Camera.init(gltf, args.width, args.height);
-        const world = try World.init(gltf, allocator);
+        const world = try World.init(gltf, arena_allocator);
 
-        var samples = try allocator.alloc(Sample, std.mem.alignForward(usize, camera.w * camera.h, BATCH_SIZE));
-        errdefer allocator.free(samples);
+        var samples = try arena_allocator.alloc(Sample, std.mem.alignForward(usize, camera.w * camera.h, BATCH_SIZE));
+        errdefer arena_allocator.free(samples);
 
         for (0..camera.h) |y| {
             for (0..camera.w) |x| {
@@ -525,11 +496,6 @@ const Scene = struct {
         };
     }
 
-    fn deinit(self: Scene, allocator: std.mem.Allocator) void {
-        self.world.deinit(allocator);
-        allocator.free(self.samples);
-    }
-
     fn render(self: Scene) void {
         var begin: usize = 0;
         while (begin != self.samples.len) {
@@ -540,9 +506,9 @@ const Scene = struct {
         }
     }
 
-    fn getPixelColor(self: Scene, x: u16, y: u16) RGB
+    fn getPixelColor(self: Scene, x: u16, y: u16) zigimg.color.Rgb24
     {
-        return self.samples[y*self.camera.w+x].color.sqrt().toRGB();
+        return self.samples[y*self.camera.w+x].color.toRGB();
     }
 };
 
@@ -620,11 +586,50 @@ const CmdlineArgs = struct {
     }
 };
 
+fn loadGltf(_allocator: std.mem.Allocator, path: []const u8) !Gltf {
+    const gltf_dir = std.fs.path.dirname(path).?;
+
+    var gltf = Gltf.init(_allocator);
+    const arena_allocator = gltf.arena.allocator();
+    const buf = try loadFile(path, arena_allocator);
+    try gltf.parse(buf);
+
+    for (gltf.data.buffers.items, 0..) |*buffer, i| {
+        if (i == 0 and buffer.uri == null) {
+            buffer.data = gltf.glb_binary;
+            continue;
+        }
+        var tmp = [_]u8{undefined} ** 256;
+        const buf_path = try std.fmt.bufPrint(&tmp, "{s}/{s}", .{gltf_dir, buffer.uri.?});
+        std.log.info("Loading buffer {s}", .{buf_path});
+        buffer.data = try loadFile(buf_path, arena_allocator);
+    }
+
+    for (gltf.data.images.items) |*image| {
+        const im = blk: {
+            if (image.buffer_view != null) {
+                const buffer_view = gltf.data.buffer_views.items[image.buffer_view.?];
+                const buffer = gltf.data.buffers.items[buffer_view.buffer];
+                const begin = buffer_view.byte_offset;
+                const end = begin + buffer_view.byte_length;
+                break :blk try zigimg.Image.fromMemory(arena_allocator, buffer.data.?[begin..end]);
+            } else {
+                var tmp = [_]u8{undefined} ** 256;
+                const img_path = try std.fmt.bufPrintZ(&tmp, "{s}/{s}", .{gltf_dir, image.uri.?});
+                std.log.info("Loading image {s}", .{img_path});
+                break :blk try zigimg.Image.fromFilePath(arena_allocator, img_path);
+            }
+        };
+        const ptr = try arena_allocator.create(zigimg.Image);
+        ptr.* = im;
+        image.data = @ptrCast(ptr);
+    }
+
+    return gltf;
+}
+
 pub fn main() !void {
     const start_time = std.time.nanoTimestamp();
-
-    c.stbi_set_flip_vertically_on_load(0);
-    c.stbi_set_flip_vertically_on_load_thread(0);
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer std.debug.assert(gpa.deinit() == .ok);
@@ -634,35 +639,32 @@ pub fn main() !void {
     defer args.deinit(allocator);
     args.print();
 
-    const scene = try Scene.load(args, allocator);
-    defer scene.deinit(allocator);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    const scene = blk: {
+        var gltf = try loadGltf(allocator, args.in);
+        defer gltf.deinit();
+        break :blk try Scene.load(gltf, args, arena.allocator());
+    };
 
     scene.render();
 
     const w = scene.camera.w;
     const h = scene.camera.h;
 
-    var img = try allocator.alloc(RGB, w * h);
-    defer allocator.free(img);
+    var img = try zigimg.Image.create(allocator, w, h, .rgb24);
+    defer img.deinit();
 
     for (0..h) |y| {
         for (0..w) |x| {
             const row = h - 1 - y;
             const column = w - 1 - x;
-            img[row*w+column] = scene.getPixelColor(@intCast(x), @intCast(y));
+            img.pixels.rgb24[row*w+column] = scene.getPixelColor(@intCast(x), @intCast(y));
         }
     }
 
-    const res = c.stbi_write_png(args.out.ptr,
-        @intCast(w),
-        @intCast(h),
-        @intCast(@sizeOf(RGB)),
-        img.ptr,
-        @intCast(@sizeOf(RGB) * w));
-
-    if (res != 1) {
-        return error.WritePngFail;
-    }
+    try img.writeToFilePath(args.out, .{.png = .{}});
 
     const end_time = std.time.nanoTimestamp();
     const time_ns: u64 = @intCast(end_time - start_time);
