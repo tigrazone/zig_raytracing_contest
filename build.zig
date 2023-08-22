@@ -37,6 +37,12 @@ pub fn build(b: *std.Build) void {
 
     linkEverything(b, exe);
 
+    const zgltf = b.anonymousDependency("libs/zgltf/", @import("libs/zgltf/build.zig"), .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.addModule("zgltf", zgltf.module("zgltf"));
+
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).

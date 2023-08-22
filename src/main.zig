@@ -14,59 +14,18 @@ const add = Vec3.add;
 const c = @cImport({
     @cInclude("stb/stb_image.h");
     @cInclude("stb/stb_image_write.h");
-    @cInclude("cgltf/cgltf.h");
 });
 
+const Gltf = @import("zgltf");
+
 // =====================================================================================
 // =====================================================================================
 // =====================================================================================
 // =====================================================================================
 
 
-
-
-
-
-
-
-
-
-
-fn CGLTF_CHECK(result: c.cgltf_result) !void {
-    if (result != c.cgltf_result_success) {
-        std.log.err("GLTF error: {}", .{result});
-        return error.GltfError;
-    }
-}
-
-fn getNodeTransform(node: *const c.cgltf_node) !Mat4 {
-    var matrix: Mat4 = undefined;
-    if (node.has_matrix != 0) {
-        matrix = .{ .data = node.matrix };
-    } else if (node.has_translation != 0 or node.has_rotation != 0 or node.has_scale != 0) {
-        matrix = Mat4.identity();
-        if (node.has_translation != 0) {
-            matrix = Mat4.mul(matrix, Mat4.translation(node.translation));
-        }
-        if (node.has_rotation != 0) {
-            matrix = Mat4.mul(matrix, Mat4.rotation(node.rotation));
-        }
-        if (node.has_scale != 0) {
-            matrix = Mat4.mul(matrix, Mat4.scale(node.scale));
-        }
-    } else {
-        matrix = Mat4.identity();
-    }
-    if (node.parent == null) {
-        return matrix;
-    } else {
-        return Mat4.mul(try getNodeTransform(node.parent), matrix);
-    }
-}
-
-fn findCameraNode(gltf_data: *c.cgltf_data) !*c.cgltf_node {
-    for (0..gltf_data.nodes_count) |node_idx| {
-        const node: *c.cgltf_node = gltf_data.nodes + node_idx;
+fn findCameraNode(gltf: Gltf) !Gltf.Node {
+    for (gltf.data.nodes.items) |node| {
         if (node.camera != null) {
             return node;
         }
@@ -74,10 +33,10 @@ fn findCameraNode(gltf_data: *c.cgltf_data) !*c.cgltf_node {
     return error.CameraNodeNotFound; // TODO: implement recursive search / deal with multiple instances of the same camera
 }
 
-fn findPrimitiveAttribute(primitive: c.cgltf_primitive, comptime attr_type: c.cgltf_attribute_type) !*c.cgltf_accessor {
-    for (0..primitive.attributes_count) |i| {
-        if (primitive.attributes[i].type == attr_type) {
-            return primitive.attributes[i].data;
+fn findPrimitiveAttribute(primitive: Gltf.Primitive, comptime tag: std.meta.Tag(Gltf.Attribute)) !?Gltf.Index {
+    for (primitive.attributes.items) |attribute| {
+        if (attribute == tag) {
+            return @field(attribute, @tagName(tag));
         }
     }
     return error.AttributeNotFound;
@@ -87,50 +46,56 @@ fn Accessor(comptime T: type) type {
     return struct {
         const Self = @This();
 
-        accessor: *c.cgltf_accessor,
-        base_address: [*]u8,
+        base_address: [*]const u8,
+        num: usize,
+        stride: usize,
 
-        fn init(accessor: *c.cgltf_accessor) Self
+        fn init(gltf: Gltf, accessor_idx: ?Gltf.Index) Self
         {
+            const accessor = gltf.data.accessors.items[accessor_idx.?];
             switch (T) {
                 Vec3 => {
-                    std.debug.assert(accessor.type == c.cgltf_type_vec3);
-                    std.debug.assert(accessor.component_type == c.cgltf_component_type_r_32f);
+                    std.debug.assert(accessor.type == .vec3);
+                    std.debug.assert(accessor.component_type == .float);
                 },
                 [2]f32 => {
-                    std.debug.assert(accessor.type == c.cgltf_type_vec2);
-                    std.debug.assert(accessor.component_type == c.cgltf_component_type_r_32f);
+                    std.debug.assert(accessor.type == .vec2);
+                    std.debug.assert(accessor.component_type == .float);
                 },
                 u16 => {
-                    std.debug.assert(accessor.type == c.cgltf_type_scalar);
-                    std.debug.assert(accessor.component_type == c.cgltf_component_type_r_16u);
+                    std.debug.assert(accessor.type == .scalar);
+                    std.debug.assert(accessor.component_type == .unsigned_short);
                 },
                 else => {
                     @compileError("Implement me");
                 }
             }
+
+            const buffer_view = gltf.data.buffer_views.items[accessor.buffer_view.?];
+            const buffer = gltf.data.buffers.items[buffer_view.buffer];
+
             return .{
-                .accessor = accessor,
                 .base_address =
-                    @as([*]u8, @ptrCast(accessor.buffer_view.*.buffer.*.data)) +
-                    accessor.buffer_view.*.offset +
-                    accessor.offset
+                    buffer.data.?.ptr +
+                    buffer_view.byte_offset +
+                    accessor.byte_offset,
+                .num = accessor.count,
+                .stride = accessor.stride,
             };
         }
 
-        fn num(self: Self) usize { return self.accessor.count; }
         fn at(self: Self, idx: usize) T {
             switch (T) {
                 Vec3 => {
-                    const ptr: [*]f32 = @ptrCast(@alignCast(self.base_address + idx*self.accessor.stride));
+                    const ptr: [*]const f32 = @ptrCast(@alignCast(self.base_address + idx*self.stride));
                     return vec3(ptr[0],ptr[1],ptr[2]);
                 },
                 [2]f32 => {
-                    const ptr: [*]f32 = @ptrCast(@alignCast(self.base_address + idx*self.accessor.stride));
+                    const ptr: [*]const f32 = @ptrCast(@alignCast(self.base_address + idx*self.stride));
                     return ptr[0..2].*;
                 },
                 u16 => {
-                    const ptr: [*]u16 = @ptrCast(@alignCast(self.base_address + idx*self.accessor.stride));
+                    const ptr: [*]const u16 = @ptrCast(@alignCast(self.base_address + idx*self.stride));
                     return ptr[0];
                 },
                 else => {
@@ -162,12 +127,12 @@ const Camera = struct {
     right: Vec3,
     up: Vec3,
 
-    fn init(gltf_data: *c.cgltf_data, width: ?u16, height: ?u16) !Camera {
+    fn init(gltf: Gltf, width: ?u16, height: ?u16) !Camera {
 
-        const camera_node = try findCameraNode(gltf_data);
+        const camera_node = try findCameraNode(gltf);
 
-        const camera: *c.cgltf_camera = camera_node.camera;
-        if (camera.type != c.cgltf_camera_type_perspective) {
+        const camera = gltf.data.cameras.items[camera_node.camera.?];
+        if (camera.type != .perspective) {
             return error.OnlyPerspectiveCamerasSupported;
         }
 
@@ -180,7 +145,7 @@ const Camera = struct {
         }
         else if (width != null and height != null)
         {
-            if (camera.data.perspective.has_aspect_ratio != 0) {
+            if (camera.type.perspective.aspect_ratio != null) {
                 return error.CameraHasAspectRatio;
             }
             w = width.?;
@@ -188,10 +153,10 @@ const Camera = struct {
         }
         else
         {
-            if (camera.data.perspective.has_aspect_ratio == 0) {
+            if (camera.type.perspective.aspect_ratio == null) {
                 return error.CameraHasntAspectRatio;
             }
-            const aspect_ratio = camera.data.perspective.aspect_ratio;
+            const aspect_ratio = camera.type.perspective.aspect_ratio.?;
             w = width orelse @intFromFloat(@as(f32, @floatFromInt(height.?)) * aspect_ratio);
             h = height orelse @intFromFloat(@as(f32, @floatFromInt(width.?)) / aspect_ratio);
         }
@@ -201,7 +166,7 @@ const Camera = struct {
         const f_w: f32 = @floatFromInt(w);
         const f_h: f32 = @floatFromInt(h);
 
-        const matrix = try getNodeTransform(camera_node);
+        const matrix = Mat4{.data = gltf.getGlobalTransform(camera_node)};
         const origin = matrix.col3(3);
         const fwd = matrix.col3(2).scale(-1).normalize();
         const world_up = vec3(0,1,0);
@@ -209,7 +174,7 @@ const Camera = struct {
         const right = cross(world_up, fwd).normalize();
         const up = cross(fwd, right);
 
-        const focal_length = (f_h / 2) / @tan(camera.data.perspective.yfov / 2);
+        const focal_length = (f_h / 2) / @tan(camera.type.perspective.yfov / 2);
 
         const lower_left_corner = fwd.scale(focal_length)
             .subtract(right.scale(f_w / 2))
@@ -303,12 +268,16 @@ const Image = struct {
     h: f32,
     pitch: usize,
 
-    fn init(image: c.cgltf_image) Image {
-        const buffer: [*]u8 = @as([*]u8, @ptrCast(image.buffer_view.*.buffer.*.data)) + image.buffer_view.*.offset;
+    fn init(gltf: Gltf, image: Gltf.Image) Image {
+        const buffer_view = gltf.data.buffer_views.items[image.buffer_view.?];
+        const buffer = gltf.data.buffers.items[buffer_view.buffer];
         var w: c_int = 0;
         var h: c_int = 0;
         var channels: c_int = 0;
-        const data = c.stbi_loadf_from_memory(buffer, @intCast(image.buffer_view.*.size), &w, &h, &channels, 4);
+        const data = c.stbi_loadf_from_memory(
+            buffer.data.?.ptr + buffer_view.byte_offset,
+            @intCast(buffer_view.byte_length),
+            &w, &h, &channels, 4);
         return .{
             .data = data,
             .w = @floatFromInt(w),
@@ -336,20 +305,22 @@ const World = struct {
     triangles_data: []TriangleData,
     images: []Image,
 
-    fn calcTriangles(gltf_data: *c.cgltf_data) usize {
+    fn calcTriangles(gltf: Gltf) usize {
         var result: usize = 0;
-        for (gltf_data.nodes[0..gltf_data.nodes_count]) |node| {
+        for (gltf.data.nodes.items) |node| {
             if (node.mesh != null) {
-                for (node.mesh.*.primitives[0..node.mesh.*.primitives_count]) |primitive| {
-                    result += primitive.indices.*.count / 3;
+                const mesh = gltf.data.meshes.items[node.mesh.?];
+                for (mesh.primitives.items) |primitive| {
+                    const accessor = gltf.data.accessors.items[primitive.indices.?];
+                    result += accessor.count / 3;
                 }
             }
         }
         return result;
     }
 
-    fn init(gltf_data: *c.cgltf_data, allocator: std.mem.Allocator) !World {
-        const total_triangles_count = calcTriangles(gltf_data);
+    fn init(gltf: Gltf, allocator: std.mem.Allocator) !World {
+        const total_triangles_count = calcTriangles(gltf);
         std.log.info("Triangle count: {}", .{total_triangles_count});
 
         const triangles = try allocator.alloc(Triangle, total_triangles_count);
@@ -359,20 +330,21 @@ const World = struct {
 
         var global_triangle_counter: usize = 0;
 
-        for (gltf_data.nodes[0..gltf_data.nodes_count]) |node| {
+        for (gltf.data.nodes.items) |node| {
             if (node.mesh != null) {
-                for (node.mesh.*.primitives[0..node.mesh.*.primitives_count]) |primitive|
+                const mesh = gltf.data.meshes.items[node.mesh.?];
+                for (mesh.primitives.items) |primitive|
                 {
-                    std.debug.assert(primitive.type == c.cgltf_primitive_type_triangles);
+                    std.debug.assert(primitive.mode == .triangles);
 
-                    const positions = Accessor(Vec3).init(try findPrimitiveAttribute(primitive, c.cgltf_attribute_type_position));
-                    const normals = Accessor(Vec3).init(try findPrimitiveAttribute(primitive, c.cgltf_attribute_type_normal));
-                    const texcoords = Accessor([2]f32).init(try findPrimitiveAttribute(primitive, c.cgltf_attribute_type_texcoord));
-                    const indices = Accessor(u16).init(primitive.indices);
+                    const positions = Accessor(Vec3).init(gltf, try findPrimitiveAttribute(primitive, .position));
+                    const normals = Accessor(Vec3).init(gltf, try findPrimitiveAttribute(primitive, .normal));
+                    const texcoords = Accessor([2]f32).init(gltf, try findPrimitiveAttribute(primitive, .texcoord));
+                    const indices = Accessor(u16).init(gltf, primitive.indices);
 
-                    const triangles_count = indices.num() / 3;
+                    const triangles_count = indices.num / 3;
 
-                    const matrix = try getNodeTransform(&node);
+                    const matrix = Mat4{.data = gltf.getGlobalTransform(node)};
 
                     for (0..triangles_count) |triangle_idx| {
                         var pos: [3]Vec3 = undefined;
@@ -392,11 +364,11 @@ const World = struct {
             }
         }
 
-        const images = try allocator.alloc(Image, gltf_data.images_count);
+        const images = try allocator.alloc(Image, gltf.data.images.items.len);
         errdefer allocator.free(images);
 
-        for (0..gltf_data.images_count) |i| {
-            images[i] = Image.init(gltf_data.images[i]);
+        for (gltf.data.images.items, 0..) |image, i| {
+            images[i] = Image.init(gltf, image);
         }
 
         return .{
@@ -495,21 +467,43 @@ const Sample = struct {
     color: Vec3,
 };
 
+fn loadFile(path: []const u8, allocator: std.mem.Allocator) ![]const u8 {
+    const file = try std.fs.cwd().openFile(path, .{});
+    defer file.close();
+
+    const file_size = try file.getEndPos();
+
+    const buf = try allocator.alloc(u8, file_size);
+    errdefer allocator.free(buf);
+
+    const bytes_read = try file.readAll(buf);
+    std.debug.assert(bytes_read == file_size);
+
+    return buf;
+}
+
 const Scene = struct {
     camera: Camera,
     world: World,
     samples: []Sample,
 
     fn load(args: CmdlineArgs, allocator: std.mem.Allocator) !Scene {
-        const options = std.mem.zeroes(c.cgltf_options);
-        var gltf_data: ?*c.cgltf_data = null;
-        try CGLTF_CHECK(c.cgltf_parse_file(&options, args.in.ptr, &gltf_data));
-        defer c.cgltf_free(gltf_data);
+        var gltf = Gltf.init(allocator);
+        defer gltf.deinit();
 
-        try CGLTF_CHECK(c.cgltf_load_buffers(&options, gltf_data, std.fs.path.dirname(args.in).?.ptr));
+        const buf = try loadFile(args.in, allocator);
+        defer allocator.free(buf);
 
-        const camera = try Camera.init(gltf_data.?, args.width, args.height);
-        const world = try World.init(gltf_data.?, allocator);
+        try gltf.parse(buf);
+
+        for (gltf.data.buffers.items, 0..) |*buffer, i| {
+            if (i == 0 and buffer.uri == null) {
+                buffer.data = gltf.glb_binary;
+            }
+        }
+
+        const camera = try Camera.init(gltf, args.width, args.height);
+        const world = try World.init(gltf, allocator);
 
         var samples = try allocator.alloc(Sample, std.mem.alignForward(usize, camera.w * camera.h, BATCH_SIZE));
         errdefer allocator.free(samples);
