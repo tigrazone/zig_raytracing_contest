@@ -22,6 +22,18 @@
 	"build_systems":
 	[
 		{
+			"name": "ReleaseFast Sponza",
+			"shell_cmd": "zig build run -Doptimize=ReleaseFast -- --in $project_path\\models\\sponza\\Sponza.gltf --out $project_path\\output.png --height 300",
+			"working_dir": "$project_path",
+			"file_regex": "(.*?):(\\d+):(\\d+): (error: .*)",
+		},
+		{
+			"name": "ReleaseSafe Sponza",
+			"shell_cmd": "zig build run -Doptimize=ReleaseSafe -- --in $project_path\\models\\sponza\\Sponza.gltf --out $project_path\\output.png --height 10",
+			"working_dir": "$project_path",
+			"file_regex": "(.*?):(\\d+):(\\d+): (error: .*)",
+		},
+		{
 			"name": "ReleaseFast",
 			"shell_cmd": "zig build run -Doptimize=ReleaseFast -- --in $project_path\\models\\Duck.glb --out $project_path\\output.png --height 300",
 			"working_dir": "$project_path",

@@ -617,7 +617,10 @@ fn loadGltf(_allocator: std.mem.Allocator, path: []const u8) !Gltf {
                 var tmp = [_]u8{undefined} ** 256;
                 const img_path = try std.fmt.bufPrintZ(&tmp, "{s}/{s}", .{gltf_dir, image.uri.?});
                 std.log.info("Loading image {s}", .{img_path});
-                break :blk try zigimg.Image.fromFilePath(arena_allocator, img_path);
+                const data = try loadFile(img_path, _allocator);
+                defer _allocator.free(data);
+                break :blk try zigimg.Image.fromMemory(arena_allocator, data);
+                // break :blk try zigimg.Image.fromFilePath(arena_allocator, img_path);
             }
         };
         const ptr = try arena_allocator.create(zigimg.Image);
