@@ -1,8 +1,9 @@
 const std = @import("std");
-const math = @import("math.zig");
 
-const Mat4 = math.Mat4;
-const Vec3 = math.Vec3;
+const linalg = @import("linalg.zig");
+
+const Mat4 = linalg.Mat4;
+const Vec3 = linalg.Vec3;
 
 const vec3 = Vec3.init;
 const dot = Vec3.dot;
@@ -10,6 +11,7 @@ const cross = Vec3.cross;
 const subtract = Vec3.subtract;
 const add = Vec3.add;
 
+const CmdlineArgs = @import("cmdline_args.zig");
 const Gltf = @import("zgltf");
 const zigimg = @import("zigimg");
 
@@ -527,63 +529,6 @@ const Scene = struct {
 
 pub const std_options = struct {
     pub const log_level = .info;
-};
-
-const default_input = "input.gltf";
-const default_output = "output.png";
-
-const CmdlineArgs = struct {
-    in: [:0]const u8 = default_input,
-    out: [:0]const u8 = default_output,
-    width: ?u16 = null,
-    height: ?u16 = null,
-
-    fn init(allocator: std.mem.Allocator) !CmdlineArgs {
-        const args = try std.process.argsAlloc(allocator);
-        defer std.process.argsFree(allocator, args);
-
-        var i: usize = 1;
-        var result: CmdlineArgs = .{};
-        while (i < args.len) {
-            const arg = args[i];
-            i += 1;
-            if (std.mem.eql(u8, arg, "--in")) {
-                result.in = try allocator.dupeZ(u8, args[i]);
-                i += 1;
-            } else if (std.mem.eql(u8, arg, "--out")) {
-                result.out = try allocator.dupeZ(u8, args[i]);
-                i += 1;
-            } else if (std.mem.eql(u8, arg, "--width")) {
-                result.width = try std.fmt.parseInt(u16, args[i], 10);
-                i += 1;
-            } else if (std.mem.eql(u8, arg, "--height")) {
-                result.height = try std.fmt.parseInt(u16, args[i], 10);
-                i += 1;
-            } else {
-                return error.UnsupportedCmdlineArgument;
-            }
-
-        }
-        return result;
-    }
-
-    fn deinit(self: CmdlineArgs, allocator: std.mem.Allocator) void {
-        if (self.in.ptr != default_input.ptr) {
-            allocator.free(self.in);
-        }
-        if (self.out.ptr != default_output.ptr) {
-            allocator.free(self.out);
-        }
-    }
-
-    fn print(self: CmdlineArgs) void {
-        std.log.debug("--in {s} --out {s} --width {?} --height {?}", .{
-            self.in,
-            self.out,
-            self.width,
-            self.height,
-        });
-    }
 };
 
 fn loadGltf(_allocator: std.mem.Allocator, path: []const u8) !Gltf {
