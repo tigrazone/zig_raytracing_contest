@@ -631,6 +631,11 @@ fn loadGltf(_allocator: std.mem.Allocator, path: []const u8) !Gltf {
     return gltf;
 }
 
+fn getDuration(start_time: i128) @TypeOf(std.fmt.fmtDuration(1)) {
+    const end_time = std.time.nanoTimestamp();
+    return std.fmt.fmtDuration(@intCast(end_time - start_time));
+}
+
 pub fn main() !void {
     const start_time = std.time.nanoTimestamp();
 
@@ -646,12 +651,21 @@ pub fn main() !void {
     defer arena.deinit();
 
     const scene = blk: {
+        const loading_time = std.time.nanoTimestamp();
         var gltf = try loadGltf(allocator, args.in);
         defer gltf.deinit();
-        break :blk try Scene.load(gltf, args, arena.allocator());
+        std.log.info("Loaded in {}", .{getDuration(loading_time)});
+
+        const preprocessing_time = std.time.nanoTimestamp();
+        const scene = try Scene.load(gltf, args, arena.allocator());
+        std.log.info("Preprocessed in {}", .{getDuration(preprocessing_time)});
+
+        break :blk scene;
     };
 
+    const render_time = std.time.nanoTimestamp();
     scene.render();
+    std.log.info("Rendered in {}", .{getDuration(render_time)});
 
     const w = scene.camera.w;
     const h = scene.camera.h;
@@ -669,7 +683,5 @@ pub fn main() !void {
 
     try img.writeToFilePath(args.out, .{.png = .{}});
 
-    const end_time = std.time.nanoTimestamp();
-    const time_ns: u64 = @intCast(end_time - start_time);
-    std.log.info("Done in {}", .{std.fmt.fmtDuration(time_ns)});
+    std.log.info("Done in {}", .{getDuration(start_time)});
 }
