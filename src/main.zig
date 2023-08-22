@@ -235,12 +235,7 @@ const Vertex = struct {
 
 const TriangleData = struct {
     v: [3]Vertex,
-    img_idx: usize,
-
-    fn setMaterial(self: *TriangleData, gltf: Gltf, material_idx: ?Gltf.Index) void {
-        const material = gltf.data.materials.items[material_idx.?];
-        self.img_idx = material.metallic_roughness.base_color_texture.?.index;
-    }
+    material_idx: usize,
 
     fn interpolate(self: TriangleData, comptime field_name: []const u8, u: f32, v: f32) @TypeOf(@field(self.v[0], field_name)) {
         const v0 = @field(self.v[0], field_name);
@@ -263,18 +258,21 @@ const TriangleData = struct {
     }
 };
 
-const Image = struct {
-    data: []zigimg.color.Colorf32,
+const Texture = struct {
+    data: []Vec3,
     w: f32,
     h: f32,
     w_int: usize,
 
-    fn init(allocator: std.mem.Allocator, image: Gltf.Image) !Image {
+    fn init(allocator: std.mem.Allocator, gltf: Gltf, texture_idx: Gltf.Index, _factor: [4]f32) !Texture {
+        const texture = gltf.data.textures.items[texture_idx];
+        const image = gltf.data.images.items[texture.source.?];
         const im: *const zigimg.Image = @alignCast(@ptrCast(image.data.?));
-        const data = try allocator.alloc(zigimg.color.Colorf32, im.width * im.height * 4);
+        const data = try allocator.alloc(Vec3, im.width*im.height);
         var iter = im.iterator();
+        const factor = vec3(_factor[0], _factor[1], _factor[2]);
         while (iter.next()) |pixel| {
-            data[iter.current_index-1] = pixel;
+            data[iter.current_index-1] = vec3(pixel.r, pixel.g, pixel.b).mul(factor);
         }
         return .{
             .data = data,
@@ -288,21 +286,36 @@ const Image = struct {
         return @fabs(v - @trunc(v));
     }
 
-    fn sample(self: Image, u: f32, v: f32) Vec3 {
+    fn sample(self: Texture, u: f32, v: f32) Vec3 {
         // TODO: move me into sampler and implement filtering
         const x: usize = @intFromFloat(self.w * frac(u));
         const y: usize = @intFromFloat(self.h * frac(v));
         const pos = y * self.w_int + x;
-        const pixel = self.data[pos];
-        const color = vec3(pixel.r, pixel.g, pixel.b);
-        return color;
+        return self.data[pos];
+    }
+};
+
+const Material = struct {
+    base_color: Texture,
+
+    fn init(allocator: std.mem.Allocator, gltf: Gltf, material_idx: Gltf.Index) !Material {
+        const material = gltf.data.materials.items[material_idx];
+        return .{
+            .base_color = try Texture.init(allocator, gltf,
+                material.metallic_roughness.base_color_texture.?.index,
+                material.metallic_roughness.base_color_factor),
+        };
+    }
+
+    fn getColor(self: Material, u: f32, v: f32) Vec3 {
+        return self.base_color.sample(u, v);
     }
 };
 
 const World = struct {
     triangles: []Triangle,
     triangles_data: []TriangleData,
-    images: []Image,
+    materials: []Material,
 
     fn calcTriangles(gltf: Gltf) usize {
         var result: usize = 0;
@@ -355,22 +368,22 @@ const World = struct {
                             };
                         }
                         triangles[global_triangle_counter].init(pos[0], pos[1], pos[2]);
-                        triangles_data[global_triangle_counter].setMaterial(gltf, primitive.material);
+                        triangles_data[global_triangle_counter].material_idx = primitive.material.?;
                         global_triangle_counter += 1;
                     }
                 }
             }
         }
 
-        const images = try arena_allocator.alloc(Image, gltf.data.images.items.len);
-        for (images, 0..) |*image, i| {
-            image.* = try Image.init(arena_allocator, gltf.data.images.items[i]);
+        const materials = try arena_allocator.alloc(Material, gltf.data.materials.items.len);
+        for (materials, 0..) |*material, i| {
+            material.* = try Material.init(arena_allocator, gltf, i);
         }
 
         return .{
             .triangles = triangles,
             .triangles_data = triangles_data,
-            .images = images,
+            .materials = materials,
         };
     }
 
@@ -437,7 +450,7 @@ const World = struct {
             if (sample.hit.t < std.math.inf(f32)) {
                 const triangle = world.triangles_data[sample.hit.triangle_idx];
                 const texcoord = triangle.interpolate("texcoord", sample.hit.u, sample.hit.v);
-                sample.color = world.images[triangle.img_idx].sample(texcoord[0], texcoord[1]);
+                sample.color = world.materials[triangle.material_idx].getColor(texcoord[0], texcoord[1]);
             }
             else {
                 sample.color = getEnvColor(sample.ray);

@@ -67,6 +67,10 @@ pub const Vec3 = struct {
         return @reduce(.Add, a.data * b.data);
     }
 
+    pub fn mul(a: Vec3, b: Vec3) Vec3 {
+        return .{ .data = a.data * b.data };
+    }
+
     pub fn cross(a: Vec3, b: Vec3) Vec3 {
         const tmp0 = @shuffle(f32, a.data, a.data ,@Vector(3, i32){1,2,0});
         const tmp1 = @shuffle(f32, b.data, b.data ,@Vector(3, i32){2,0,1});
