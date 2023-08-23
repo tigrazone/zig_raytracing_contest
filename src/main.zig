@@ -214,15 +214,52 @@ const Ray = struct {
 };
 
 const Triangle = struct {
-    v0: Vec3,
-    e1: Vec3,
-    e2: Vec3,
+    pos: Pos,
+    data: Data,
 
-    fn init(self: *Triangle, v0: Vec3, v1: Vec3, v2: Vec3) void {
-        self.v0 = v0;
-        self.e1 = subtract(v1, v0);
-        self.e2 = subtract(v2, v0);
-    }
+    const Pos = struct {
+        v0: Vec3,
+        e1: Vec3,
+        e2: Vec3,
+
+        fn init(v0: Vec3, v1: Vec3, v2: Vec3) Pos {
+            return .{
+                .v0 = v0,
+                .e1 = subtract(v1, v0),
+                .e2 = subtract(v2, v0),
+            };
+        }
+    };
+
+    const Data = struct {
+        v: [3]Vertex,
+        material_idx: usize,
+
+        const Vertex = struct {
+            normal: Vec3,
+            texcoord: [2]f32,
+        };
+
+        fn interpolate(self: Data, comptime field_name: []const u8, u: f32, v: f32) @TypeOf(@field(self.v[0], field_name)) {
+            const v0 = @field(self.v[0], field_name);
+            const v1 = @field(self.v[1], field_name);
+            const v2 = @field(self.v[2], field_name);
+            switch (@TypeOf(@field(self.v[0], field_name))) {
+                Vec3 => {
+                    return v0.scale(1-u-v).add(v1.scale(u)).add(v2.scale(v));
+                },
+                [2]f32 => {
+                    return .{
+                        v0[0]*(1-u-v) + v1[0]*u + v2[0]*v,
+                        v0[1]*(1-u-v) + v1[1]*u + v2[1]*v,
+                    };
+                },
+                else => {
+                    @compileError("Implement me");
+                }
+            }
+        }
+    };
 };
 
 const Hit = struct {
@@ -230,36 +267,6 @@ const Hit = struct {
     u: f32,
     v: f32,
     triangle_idx: usize,
-};
-
-const Vertex = struct {
-    normal: Vec3,
-    texcoord: [2]f32,
-};
-
-const TriangleData = struct {
-    v: [3]Vertex,
-    material_idx: usize,
-
-    fn interpolate(self: TriangleData, comptime field_name: []const u8, u: f32, v: f32) @TypeOf(@field(self.v[0], field_name)) {
-        const v0 = @field(self.v[0], field_name);
-        const v1 = @field(self.v[1], field_name);
-        const v2 = @field(self.v[2], field_name);
-        switch (@TypeOf(@field(self.v[0], field_name))) {
-            Vec3 => {
-                return v0.scale(1-u-v).add(v1.scale(u)).add(v2.scale(v));
-            },
-            [2]f32 => {
-                return .{
-                    v0[0]*(1-u-v) + v1[0]*u + v2[0]*v,
-                    v0[1]*(1-u-v) + v1[1]*u + v2[1]*v,
-                };
-            },
-            else => {
-                @compileError("Implement me");
-            }
-        }
-    }
 };
 
 const Texture = struct {
@@ -317,8 +324,7 @@ const Material = struct {
 };
 
 const World = struct {
-    triangles: []Triangle,
-    triangles_data: []TriangleData,
+    triangles: std.MultiArrayList(Triangle),
     materials: []Material,
 
     fn calcTriangles(gltf: Gltf) usize {
@@ -339,10 +345,8 @@ const World = struct {
         const total_triangles_count = calcTriangles(gltf);
         std.log.info("Triangle count: {}", .{total_triangles_count});
 
-        const triangles = try arena_allocator.alloc(Triangle, total_triangles_count);
-        const triangles_data = try arena_allocator.alloc(TriangleData, total_triangles_count);
-
-        var global_triangle_counter: usize = 0;
+        var triangles = std.MultiArrayList(Triangle){};
+        try triangles.setCapacity(arena_allocator, total_triangles_count);
 
         for (gltf.data.nodes.items) |node| {
             if (node.mesh != null) {
@@ -362,18 +366,23 @@ const World = struct {
 
                     for (0..triangles_count) |triangle_idx| {
                         var pos: [3]Vec3 = undefined;
+                        var data = Triangle.Data {
+                            .v = undefined,
+                            .material_idx = primitive.material.?,
+                        };
                         for (0..3) |i| {
                             const index_idx = triangle_idx*3+i;
                             const vertex_idx = indices.at(index_idx);
                             pos[i] = matrix.transformPosition(positions.at(vertex_idx));
-                            triangles_data[global_triangle_counter].v[i] = .{
+                            data.v[i] = .{
                                 .normal = matrix.transformDirection(normals.at(vertex_idx)).normalize(), // TODO: use adjusent matrix
                                 .texcoord = texcoords.at(vertex_idx),
                             };
                         }
-                        triangles[global_triangle_counter].init(pos[0], pos[1], pos[2]);
-                        triangles_data[global_triangle_counter].material_idx = primitive.material.?;
-                        global_triangle_counter += 1;
+                        triangles.appendAssumeCapacity(.{
+                            .pos = Triangle.Pos.init(pos[0], pos[1], pos[2]),
+                            .data = data,
+                        });
                     }
                 }
             }
@@ -387,7 +396,6 @@ const World = struct {
 
         return .{
             .triangles = triangles,
-            .triangles_data = triangles_data,
             .materials = materials,
         };
     }
@@ -435,7 +443,7 @@ const World = struct {
         inline for (0..BATCH_SIZE) |i| {
             batch[i].hit.t = std.math.inf(f32);
         }
-        for (world.triangles, 0..) |triangle, triangle_idx|
+        for (world.triangles.items(.pos), 0..) |triangle, triangle_idx|
         {
             inline for (0..BATCH_SIZE) |i| {
                 const sample = &batch[i];
@@ -450,10 +458,11 @@ const World = struct {
                 }
             }
         }
+        const triangle_data = world.triangles.items(.data);
         inline for (0..BATCH_SIZE) |i| {
             const sample = &batch[i];
             if (sample.hit.t < std.math.inf(f32)) {
-                const triangle = world.triangles_data[sample.hit.triangle_idx];
+                const triangle = triangle_data[sample.hit.triangle_idx];
                 const texcoord = triangle.interpolate("texcoord", sample.hit.u, sample.hit.v);
                 sample.color = world.materials[triangle.material_idx].getColor(texcoord[0], texcoord[1]);
             }
