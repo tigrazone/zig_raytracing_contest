@@ -15,6 +15,12 @@ const CmdlineArgs = @import("cmdline_args.zig");
 const Gltf = @import("zgltf");
 const zigimg = @import("zigimg");
 
+
+
+
+
+
+
 // =====================================================================================
 // =====================================================================================
 // =====================================================================================
@@ -102,8 +108,6 @@ fn Accessor(comptime T: type) type {
         }
     };
 }
-
-
 
 
 
@@ -467,21 +471,6 @@ const Sample = struct {
     color: Vec3,
 };
 
-fn loadFile(path: []const u8, allocator: std.mem.Allocator) ![]const u8 {
-    const file = try std.fs.cwd().openFile(path, .{});
-    defer file.close();
-
-    const file_size = try file.getEndPos();
-
-    const buf = try allocator.alloc(u8, file_size);
-    errdefer allocator.free(buf);
-
-    const bytes_read = try file.readAll(buf);
-    std.debug.assert(bytes_read == file_size);
-
-    return buf;
-}
-
 const Scene = struct {
     camera: Camera,
     world: World,
@@ -540,9 +529,49 @@ const Scene = struct {
 // =====================================================================================
 // =====================================================================================
 
-pub const std_options = struct {
-    pub const log_level = .info;
-};
+fn loadFile(path: []const u8, allocator: std.mem.Allocator) ![]const u8 {
+    const file = try std.fs.cwd().openFile(path, .{});
+    defer file.close();
+
+    const file_size = try file.getEndPos();
+
+    const buf = try allocator.alloc(u8, file_size);
+    errdefer allocator.free(buf);
+
+    const bytes_read = try file.readAll(buf);
+    std.debug.assert(bytes_read == file_size);
+
+    return buf;
+}
+
+fn loadGltfImages(tmp_allocator: std.mem.Allocator, arena_allocator: std.mem.Allocator,
+    gltf_dir: []const u8, gltf: *Gltf,
+    thread_offset: usize, thread_stride: usize) !void
+{
+    var image_idx = thread_offset;
+    while (image_idx < gltf.data.images.items.len) : (image_idx += thread_stride) {
+        const image = &gltf.data.images.items[image_idx];
+        const im = blk: {
+            if (image.buffer_view != null) {
+                const buffer_view = gltf.data.buffer_views.items[image.buffer_view.?];
+                const buffer = gltf.data.buffers.items[buffer_view.buffer];
+                const begin = buffer_view.byte_offset;
+                const end = begin + buffer_view.byte_length;
+                break :blk try zigimg.Image.fromMemory(arena_allocator, buffer.data.?[begin..end]);
+            } else {
+                var tmp = [_]u8{undefined} ** 256;
+                const img_path = try std.fmt.bufPrintZ(&tmp, "{s}/{s}", .{gltf_dir, image.uri.?});
+                std.log.info("Loading image {s}", .{img_path});
+                const data = try loadFile(img_path, tmp_allocator);
+                defer tmp_allocator.free(data);
+                break :blk try zigimg.Image.fromMemory(arena_allocator, data);
+            }
+        };
+        const ptr = try arena_allocator.create(zigimg.Image);
+        ptr.* = im;
+        image.data = @ptrCast(ptr);
+    }
+}
 
 fn loadGltf(_allocator: std.mem.Allocator, path: []const u8) !Gltf {
     const gltf_dir = std.fs.path.dirname(path).?;
@@ -563,36 +592,44 @@ fn loadGltf(_allocator: std.mem.Allocator, path: []const u8) !Gltf {
         buffer.data = try loadFile(buf_path, arena_allocator);
     }
 
-    for (gltf.data.images.items) |*image| {
-        const im = blk: {
-            if (image.buffer_view != null) {
-                const buffer_view = gltf.data.buffer_views.items[image.buffer_view.?];
-                const buffer = gltf.data.buffers.items[buffer_view.buffer];
-                const begin = buffer_view.byte_offset;
-                const end = begin + buffer_view.byte_length;
-                break :blk try zigimg.Image.fromMemory(arena_allocator, buffer.data.?[begin..end]);
-            } else {
-                var tmp = [_]u8{undefined} ** 256;
-                const img_path = try std.fmt.bufPrintZ(&tmp, "{s}/{s}", .{gltf_dir, image.uri.?});
-                std.log.info("Loading image {s}", .{img_path});
-                const data = try loadFile(img_path, _allocator);
-                defer _allocator.free(data);
-                break :blk try zigimg.Image.fromMemory(arena_allocator, data);
-                // break :blk try zigimg.Image.fromFilePath(arena_allocator, img_path);
-            }
-        };
-        const ptr = try arena_allocator.create(zigimg.Image);
-        ptr.* = im;
-        image.data = @ptrCast(ptr);
+    var safe_tmp_allocator = std.heap.ThreadSafeAllocator{.child_allocator = _allocator};
+    var safe_arena_allocator = std.heap.ThreadSafeAllocator{.child_allocator = arena_allocator};
+    const num_threads = @min(try std.Thread.getCpuCount(), gltf.data.images.items.len);
+    const threads = try _allocator.alloc(std.Thread, num_threads);
+    defer _allocator.free(threads);
+    for (threads, 0..) |*thread, i| {
+        thread.* = try std.Thread.spawn(.{}, loadGltfImages, .{
+            safe_tmp_allocator.allocator(), safe_arena_allocator.allocator(),
+            gltf_dir, &gltf,
+            i, num_threads
+        });
+    }
+    for (threads) |*thread| {
+        thread.join();
     }
 
     return gltf;
 }
 
+
+
+
+
+
+
+// =====================================================================================
+// =====================================================================================
+// =====================================================================================
+// =====================================================================================
+
 fn getDuration(start_time: i128) @TypeOf(std.fmt.fmtDuration(1)) {
     const end_time = std.time.nanoTimestamp();
     return std.fmt.fmtDuration(@intCast(end_time - start_time));
 }
+
+pub const std_options = struct {
+    pub const log_level = .info;
+};
 
 pub fn main() !void {
     const start_time = std.time.nanoTimestamp();
