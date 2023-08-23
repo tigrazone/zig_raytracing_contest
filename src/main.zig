@@ -383,6 +383,7 @@ const World = struct {
         for (materials, 0..) |*material, i| {
             material.* = try Material.init(arena_allocator, gltf, i);
         }
+        std.log.info("Materials count: {}", .{materials.len});
 
         return .{
             .triangles = triangles,
@@ -500,13 +501,30 @@ const Scene = struct {
         };
     }
 
-    fn render(self: Scene) void {
-        var begin: usize = 0;
-        while (begin != self.samples.len) {
+    fn renderSamples(self: Scene, thread_idx: usize, thread_num: usize) void {
+        const num_batches = self.samples.len / BATCH_SIZE;
+        const batches_per_thread = (num_batches + thread_num - 1) / thread_num;
+        const first_batch = batches_per_thread * thread_idx;
+        var begin = first_batch * BATCH_SIZE;
+        for (0..batches_per_thread) |_| {
+            if (begin >= self.samples.len) {
+                break;
+            }
             const end = begin + BATCH_SIZE;
             const batch = self.samples[begin..end];
             self.world.render(batch);
             begin = end;
+        }
+    }
+
+    fn render(self: Scene, threads: []std.Thread) !void {
+        for (threads, 0..) |*thread, i| {
+            thread.* = try std.Thread.spawn(.{}, renderSamples, .{
+                self, i, threads.len
+            });
+        }
+        for (threads) |*thread| {
+            thread.join();
         }
     }
 
@@ -546,10 +564,10 @@ fn loadFile(path: []const u8, allocator: std.mem.Allocator) ![]const u8 {
 
 fn loadGltfImages(tmp_allocator: std.mem.Allocator, arena_allocator: std.mem.Allocator,
     gltf_dir: []const u8, gltf: *Gltf,
-    thread_offset: usize, thread_stride: usize) !void
+    thread_idx: usize, thread_num: usize) !void
 {
-    var image_idx = thread_offset;
-    while (image_idx < gltf.data.images.items.len) : (image_idx += thread_stride) {
+    var image_idx = thread_idx;
+    while (image_idx < gltf.data.images.items.len) : (image_idx += thread_num) {
         const image = &gltf.data.images.items[image_idx];
         const im = blk: {
             if (image.buffer_view != null) {
@@ -561,7 +579,7 @@ fn loadGltfImages(tmp_allocator: std.mem.Allocator, arena_allocator: std.mem.All
             } else {
                 var tmp = [_]u8{undefined} ** 256;
                 const img_path = try std.fmt.bufPrintZ(&tmp, "{s}/{s}", .{gltf_dir, image.uri.?});
-                std.log.info("Loading image {s}", .{img_path});
+                std.log.debug("Loading image {s}", .{img_path});
                 const data = try loadFile(img_path, tmp_allocator);
                 defer tmp_allocator.free(data);
                 break :blk try zigimg.Image.fromMemory(arena_allocator, data);
@@ -573,7 +591,7 @@ fn loadGltfImages(tmp_allocator: std.mem.Allocator, arena_allocator: std.mem.All
     }
 }
 
-fn loadGltf(_allocator: std.mem.Allocator, path: []const u8) !Gltf {
+fn loadGltf(_allocator: std.mem.Allocator, path: []const u8, threads: []std.Thread) !Gltf {
     const gltf_dir = std.fs.path.dirname(path).?;
 
     var gltf = Gltf.init(_allocator);
@@ -588,20 +606,17 @@ fn loadGltf(_allocator: std.mem.Allocator, path: []const u8) !Gltf {
         }
         var tmp = [_]u8{undefined} ** 256;
         const buf_path = try std.fmt.bufPrint(&tmp, "{s}/{s}", .{gltf_dir, buffer.uri.?});
-        std.log.info("Loading buffer {s}", .{buf_path});
+        std.log.debug("Loading buffer {s}", .{buf_path});
         buffer.data = try loadFile(buf_path, arena_allocator);
     }
 
     var safe_tmp_allocator = std.heap.ThreadSafeAllocator{.child_allocator = _allocator};
     var safe_arena_allocator = std.heap.ThreadSafeAllocator{.child_allocator = arena_allocator};
-    const num_threads = @min(try std.Thread.getCpuCount(), gltf.data.images.items.len);
-    const threads = try _allocator.alloc(std.Thread, num_threads);
-    defer _allocator.free(threads);
     for (threads, 0..) |*thread, i| {
         thread.* = try std.Thread.spawn(.{}, loadGltfImages, .{
             safe_tmp_allocator.allocator(), safe_arena_allocator.allocator(),
             gltf_dir, &gltf,
-            i, num_threads
+            i, threads.len
         });
     }
     for (threads) |*thread| {
@@ -642,12 +657,17 @@ pub fn main() !void {
     defer args.deinit(allocator);
     args.print();
 
+    const num_threads = try std.Thread.getCpuCount();
+    const threads = try allocator.alloc(std.Thread, num_threads);
+    defer allocator.free(threads);
+    std.log.info("Num threads: {}", .{num_threads});
+
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
 
     const scene = blk: {
         const loading_time = std.time.nanoTimestamp();
-        var gltf = try loadGltf(allocator, args.in);
+        var gltf = try loadGltf(allocator, args.in, threads);
         defer gltf.deinit();
         std.log.info("Loaded in {}", .{getDuration(loading_time)});
 
@@ -659,7 +679,7 @@ pub fn main() !void {
     };
 
     const render_time = std.time.nanoTimestamp();
-    scene.render();
+    try scene.render(threads);
     std.log.info("Rendered in {}", .{getDuration(render_time)});
 
     const w = scene.camera.w;
