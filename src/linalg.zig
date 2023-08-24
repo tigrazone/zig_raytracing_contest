@@ -174,3 +174,73 @@ pub const Mat4 = struct {
         };
     }
 };
+
+pub const Ray = struct {
+    orig: Vec3,
+    dir: Vec3,
+
+    pub fn at(self: Ray, t: f32) Vec3 {
+        return self.orig.add(self.dir.scale(t));
+    }
+};
+
+const dot = Vec3.dot;
+const cross = Vec3.cross;
+const subtract = Vec3.subtract;
+const add = Vec3.add;
+
+pub const Bbox = struct {
+    min: Vec3 = Vec3.zeroes(),
+    max: Vec3 = Vec3.zeroes(),
+
+    pub fn extendBy(self: *Bbox, pos: Vec3) void {
+        self.min = Vec3.min(self.min, pos);
+        self.max = Vec3.max(self.max, pos);
+    }
+
+    pub fn size(self: Bbox) Vec3 {
+        return subtract(self.max, self.min);
+    }
+};
+
+pub const Triangle = struct {
+    v0: Vec3,
+    e1: Vec3,
+    e2: Vec3,
+
+    pub fn init(v0: Vec3, v1: Vec3, v2: Vec3) Triangle {
+        return .{
+            .v0 = v0,
+            .e1 = subtract(v1, v0),
+            .e2 = subtract(v2, v0),
+        };
+    }
+
+    pub fn rayIntersection(self: Triangle, ray: Ray, t: *f32, _u: *f32, _v: *f32) bool
+    {
+        const pvec = cross(ray.dir, self.e2);
+        const det = dot(self.e1, pvec);
+
+        const epsilon = 0.00000001; // TODO
+
+        // // if the determinant is negative, the triangle is 'back facing'
+        // // if the determinant is close to 0, the ray misses the triangle
+        if (det < epsilon) return false;
+
+        const inv_det = 1.0 / det;
+
+        const tvec = subtract(ray.orig, self.v0);
+        const u = dot(tvec, pvec) * inv_det;
+        if (u < 0 or u > 1) return false;
+
+        const qvec = cross(tvec, self.e1);
+        const v = dot(ray.dir, qvec) * inv_det;
+        if (v < 0 or u+v > 1) return false;
+
+        t.* = dot(self.e2, qvec) * inv_det;
+        _u.* = u;
+        _v.* = v;
+
+        return true;
+    }
+};

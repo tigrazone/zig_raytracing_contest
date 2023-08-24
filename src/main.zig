@@ -5,6 +5,8 @@ const linalg = @import("linalg.zig");
 const Mat4 = linalg.Mat4;
 const Vec3 = linalg.Vec3;
 const Vec3u = linalg.Vec3u;
+const Ray = linalg.Ray;
+const Bbox = linalg.Bbox;
 
 const vec3 = Vec3.init;
 const vec3u = Vec3u.init;
@@ -208,32 +210,11 @@ const Camera = struct {
     }
 };
 
-const Ray = struct {
-    orig: Vec3,
-    dir: Vec3,
-
-    fn at(self: Ray, t: f32) Vec3 {
-        return self.orig.add(self.dir.scale(t));
-    }
-};
-
 const Triangle = struct {
     pos: Pos,
     data: Data,
 
-    const Pos = struct {
-        v0: Vec3,
-        e1: Vec3,
-        e2: Vec3,
-
-        fn init(v0: Vec3, v1: Vec3, v2: Vec3) Pos {
-            return .{
-                .v0 = v0,
-                .e1 = subtract(v1, v0),
-                .e2 = subtract(v2, v0),
-            };
-        }
-    };
+    const Pos = linalg.Triangle;
 
     const Data = struct {
         v: [3]Vertex,
@@ -324,20 +305,6 @@ const Material = struct {
 
     fn getColor(self: Material, u: f32, v: f32) Vec3 {
         return self.base_color.sample(u, v);
-    }
-};
-
-const Bbox = struct {
-    min: Vec3 = Vec3.zeroes(),
-    max: Vec3 = Vec3.zeroes(),
-
-    fn extendBy(self: *Bbox, pos: Vec3) void {
-        self.min = Vec3.min(self.min, pos);
-        self.max = Vec3.max(self.max, pos);
-    }
-
-    fn size(self: Bbox) Vec3 {
-        return subtract(self.max, self.min);
     }
 };
 
@@ -516,37 +483,6 @@ const World = struct {
         };
     }
 
-    fn rayTriangleIntersection(ray: Ray, v0: Vec3, e1: Vec3, e2: Vec3, triangle_idx: usize) ?Hit
-    {
-        const pvec = cross(ray.dir, e2);
-        const det = dot(e1, pvec);
-
-        const epsilon = 0.00000001; // TODO
-
-        // // if the determinant is negative, the triangle is 'back facing'
-        // // if the determinant is close to 0, the ray misses the triangle
-        if (det < epsilon) return null;
-
-        const inv_det = 1.0 / det;
-
-        const tvec = subtract(ray.orig, v0);
-        const u = dot(tvec, pvec) * inv_det;
-        if (u < 0 or u > 1) return null;
-
-        const qvec = cross(tvec, e1);
-        const v = dot(ray.dir, qvec) * inv_det;
-        if (v < 0 or u+v > 1) return null;
-
-        const t = dot(e2, qvec) * inv_det;
-
-        return .{
-            .t = t,
-            .u = u,
-            .v = v,
-            .triangle_idx = triangle_idx,
-        };
-    }
-
     fn getEnvColor(ray: Ray) Vec3 {
         const t = 0.5*(ray.dir.y()+1.0);
         return add(
@@ -563,11 +499,13 @@ const World = struct {
         {
             inline for (0..BATCH_SIZE) |i| {
                 const sample = &batch[i];
-                const result = rayTriangleIntersection(sample.ray,
-                    triangle.v0, triangle.e1, triangle.e2,
-                    triangle_idx
-                );
-                if (result) |hit| {
+                var hit = Hit{
+                    .t = undefined,
+                    .u = undefined,
+                    .v = undefined,
+                    .triangle_idx = triangle_idx
+                };
+                if (triangle.rayIntersection(sample.ray, &hit.t, &hit.u, &hit.v)) {
                     if (sample.hit.t > hit.t and hit.t > 0) {
                         sample.hit = hit;
                     }
