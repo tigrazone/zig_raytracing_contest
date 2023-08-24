@@ -13,9 +13,9 @@ const cross = Vec3.cross;
 const subtract = Vec3.subtract;
 const add = Vec3.add;
 
-const CmdlineArgs = @import("cmdline_args.zig");
 const Gltf = @import("zgltf");
 const zigimg = @import("zigimg");
+const zigargs = @import("zigargs");
 
 test {
     _ = @import("linalg.zig");
@@ -771,6 +771,13 @@ pub const std_options = struct {
     pub const log_level = .info;
 };
 
+const CmdlineArgs = struct {
+    in: []const u8 = "input.gltf",
+    out: []const u8 = "output.png",
+    width: ?u16 = null,
+    height: ?u16 = null,
+};
+
 pub fn main() !void {
     const start_time = std.time.nanoTimestamp();
 
@@ -778,9 +785,8 @@ pub fn main() !void {
     defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
-    const args = try CmdlineArgs.init(allocator);
-    defer args.deinit(allocator);
-    args.print();
+    const args = try zigargs.parseForCurrentProcess(CmdlineArgs, allocator, .print);
+    defer args.deinit();
 
     const num_threads = try std.Thread.getCpuCount();
     const threads = try allocator.alloc(std.Thread, num_threads);
@@ -792,12 +798,12 @@ pub fn main() !void {
 
     const scene = blk: {
         const loading_time = std.time.nanoTimestamp();
-        var gltf = try loadGltf(allocator, args.in, threads);
+        var gltf = try loadGltf(allocator, args.options.in, threads);
         defer gltf.deinit();
         std.log.info("Loaded in {}", .{getDuration(loading_time)});
 
         const preprocessing_time = std.time.nanoTimestamp();
-        const scene = try Scene.load(gltf, args, arena.allocator());
+        const scene = try Scene.load(gltf, args.options, arena.allocator());
         std.log.info("Preprocessed in {}", .{getDuration(preprocessing_time)});
 
         break :blk scene;
@@ -821,7 +827,7 @@ pub fn main() !void {
         }
     }
 
-    try img.writeToFilePath(args.out, .{.png = .{}});
+    try img.writeToFilePath(args.options.out, .{.png = .{}});
 
     std.log.info("Done in {}", .{getDuration(start_time)});
 }

@@ -38,6 +38,12 @@ pub fn build(b: *std.Build) void {
     });
     exe.addModule("zigimg", zigimg.module("zigimg"));
 
+    const zigargs = b.anonymousDependency("libs/zig-args/", @import("libs/zig-args/build.zig"), .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.addModule("zigargs", zigargs.module("args"));
+
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).

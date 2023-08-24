@@ -4,3 +4,6 @@
 [submodule "libs/zigimg"]
 	path = libs/zigimg
 	url = https://github.com/zigimg/zigimg.git
+[submodule "libs/zig-args"]
+	path = libs/zig-args
+	url = https://github.com/MasterQ32/zig-args.git
