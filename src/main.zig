@@ -323,31 +323,109 @@ const Material = struct {
     }
 };
 
+const Bbox = struct {
+    min: Vec3 = Vec3.zeroes(),
+    max: Vec3 = Vec3.zeroes(),
+
+    fn extendBy(self: *Bbox, pos: Vec3) void {
+        self.min = Vec3.min(self.min, pos);
+        self.max = Vec3.max(self.max, pos);
+    }
+
+    fn size(self: Bbox) Vec3 {
+        return subtract(self.max, self.min);
+    }
+};
+
 const World = struct {
+    const Cell = struct {
+        first_triangle: u32,
+        num_triangles: u32,
+    };
+
+    cells: []Cell,
+    bbox: Bbox,
+    resolution: [3]u32,
+    cell_dim: Vec3,
     triangles: std.MultiArrayList(Triangle),
     materials: []Material,
 
-    fn calcTriangles(gltf: Gltf) usize {
+    fn calcBbox(gltf: Gltf, bbox: *Bbox) !usize {
         var result: usize = 0;
         for (gltf.data.nodes.items) |node| {
             if (node.mesh != null) {
                 const mesh = gltf.data.meshes.items[node.mesh.?];
                 for (mesh.primitives.items) |primitive| {
-                    const accessor = gltf.data.accessors.items[primitive.indices.?];
-                    result += accessor.count / 3;
+                    const positions = Accessor(Vec3).init(gltf, try findPrimitiveAttribute(primitive, .position));
+                    const indices = Accessor(u16).init(gltf, primitive.indices);
+
+                    result += indices.num / 3;
+
+                    const matrix = Mat4{.data = gltf.getGlobalTransform(node)};
+
+                    for (0..indices.num) |index_idx| {
+                        const vertex_idx = indices.at(index_idx);
+                        const pos = matrix.transformPosition(positions.at(vertex_idx));
+                        bbox.extendBy(pos);
+                    }
+
                 }
             }
         }
         return result;
     }
 
-    fn init(gltf: Gltf, arena_allocator: std.mem.Allocator) !World {
-        const total_triangles_count = calcTriangles(gltf);
-        std.log.info("Triangle count: {}", .{total_triangles_count});
+    fn initCells(gltf: Gltf, cells: []Cell, bbox: Bbox, cell_dim: Vec3, resolution: [3]u32) !usize {
+        @memset(cells, .{.first_triangle = 0, .num_triangles = 0});
+        for (gltf.data.nodes.items) |node| {
+            if (node.mesh != null) {
+                const mesh = gltf.data.meshes.items[node.mesh.?];
+                for (mesh.primitives.items) |primitive| {
+                    const positions = Accessor(Vec3).init(gltf, try findPrimitiveAttribute(primitive, .position));
+                    const indices = Accessor(u16).init(gltf, primitive.indices);
 
-        var triangles = std.MultiArrayList(Triangle){};
-        try triangles.setCapacity(arena_allocator, total_triangles_count);
+                    const triangles_count = indices.num / 3;
 
+                    const matrix = Mat4{.data = gltf.getGlobalTransform(node)};
+
+                    for (0..triangles_count) |triangle_idx| {
+                        var pos: [3]Vec3 = undefined;
+                        for (0..3) |i| {
+                            const index_idx = triangle_idx*3+i;
+                            const vertex_idx = indices.at(index_idx);
+                            pos[i] = matrix.transformPosition(positions.at(vertex_idx));
+                        }
+                        const min = Vec3.min(pos[0], Vec3.min(pos[1], pos[2])).subtract(bbox.min).div(cell_dim);
+                        const max = Vec3.max(pos[0], Vec3.max(pos[1], pos[2])).subtract(bbox.min).div(cell_dim);
+                        const zmin = std.math.clamp(@as(u32, @intFromFloat(min.z())), 0, resolution[2]-1);
+                        const zmax = std.math.clamp(@as(u32, @intFromFloat(max.z())), 0, resolution[2]-1);
+                        const ymin = std.math.clamp(@as(u32, @intFromFloat(min.y())), 0, resolution[1]-1);
+                        const ymax = std.math.clamp(@as(u32, @intFromFloat(max.y())), 0, resolution[1]-1);
+                        const xmin = std.math.clamp(@as(u32, @intFromFloat(min.x())), 0, resolution[0]-1);
+                        const xmax = std.math.clamp(@as(u32, @intFromFloat(max.x())), 0, resolution[0]-1);
+
+                        for (zmin..zmax+1) |z| {
+                            for (ymin..ymax+1) |y| {
+                                for (xmin..xmax+1) |x| {
+                                    const index = z * resolution[0] * resolution[1] + y * resolution[0] + x;
+                                    cells[index].num_triangles += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        var result: u32 = 0;
+        for (cells) |*cell| {
+            cell.first_triangle = result;
+            result += cell.num_triangles;
+            cell.num_triangles = 0;
+        }
+        return result;
+    }
+
+    fn initTriangles(gltf: Gltf, triangles: *std.MultiArrayList(Triangle), cells: []Cell, bbox: Bbox, cell_dim: Vec3, resolution: [3]u32) !void {
         for (gltf.data.nodes.items) |node| {
             if (node.mesh != null) {
                 const mesh = gltf.data.meshes.items[node.mesh.?];
@@ -379,14 +457,51 @@ const World = struct {
                                 .texcoord = texcoords.at(vertex_idx),
                             };
                         }
-                        triangles.appendAssumeCapacity(.{
+                        const triangle = Triangle{
                             .pos = Triangle.Pos.init(pos[0], pos[1], pos[2]),
                             .data = data,
-                        });
+                        };
+                        const min = Vec3.min(pos[0], Vec3.min(pos[1], pos[2])).subtract(bbox.min).div(cell_dim);
+                        const max = Vec3.max(pos[0], Vec3.max(pos[1], pos[2])).subtract(bbox.min).div(cell_dim);
+                        const zmin = std.math.clamp(@as(u32, @intFromFloat(min.z())), 0, resolution[2]-1);
+                        const zmax = std.math.clamp(@as(u32, @intFromFloat(max.z())), 0, resolution[2]-1);
+                        const ymin = std.math.clamp(@as(u32, @intFromFloat(min.y())), 0, resolution[1]-1);
+                        const ymax = std.math.clamp(@as(u32, @intFromFloat(max.y())), 0, resolution[1]-1);
+                        const xmin = std.math.clamp(@as(u32, @intFromFloat(min.x())), 0, resolution[0]-1);
+                        const xmax = std.math.clamp(@as(u32, @intFromFloat(max.x())), 0, resolution[0]-1);
+                        for (zmin..zmax+1) |z| {
+                            for (ymin..ymax+1) |y| {
+                                for (xmin..xmax+1) |x| {
+                                    const index = z * resolution[0] * resolution[1] + y * resolution[0] + x;
+                                    var cell = &cells[index];
+                                    triangles.set(cell.first_triangle + cell.num_triangles, triangle);
+                                    cell.num_triangles += 1;
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+
+    fn init(gltf: Gltf, arena_allocator: std.mem.Allocator) !World {
+        var bbox: Bbox = .{};
+        const unique_triangles = try calcBbox(gltf, &bbox);
+        std.log.info("Unique triangle count: {}", .{unique_triangles});
+
+        const resolution: [3]u32 = .{10, 10, 10};
+        std.log.info("Grid resolution: {any}", .{resolution});
+        const cell_dim = Vec3.div(bbox.size(), vec3(resolution[0], resolution[1], resolution[2]));
+
+        const cells = try arena_allocator.alloc(Cell, resolution[0] * resolution[1] * resolution[2]);
+
+        const total_triangles_count = try initCells(gltf, cells, bbox, cell_dim, resolution);
+        std.log.info("Total triangle count: {}", .{total_triangles_count});
+
+        var triangles = std.MultiArrayList(Triangle){};
+        try triangles.resize(arena_allocator, total_triangles_count);
+        try initTriangles(gltf, &triangles, cells, bbox, cell_dim, resolution);
 
         const materials = try arena_allocator.alloc(Material, gltf.data.materials.items.len);
         for (materials, 0..) |*material, i| {
@@ -395,6 +510,10 @@ const World = struct {
         std.log.info("Materials count: {}", .{materials.len});
 
         return .{
+            .cells = cells,
+            .bbox = bbox,
+            .resolution = resolution,
+            .cell_dim = cell_dim,
             .triangles = triangles,
             .materials = materials,
         };

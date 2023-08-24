@@ -30,8 +30,16 @@ pub const Vec3 = struct {
     //     return .{ .data = @sqrt(self.data) };
     // }
 
-    pub fn clamp(self: Vec3, min: f32, max: f32) Vec3 {
-        return .{ .data = @min(@max(self.data, @as(@Vector(3, f32), @splat(min))), @as(@Vector(3, f32), @splat(max))) };
+    pub fn max(a: Vec3, b: Vec3) Vec3 {
+        return .{ .data = @max(a.data, b.data) };
+    }
+
+    pub fn min(a: Vec3, b: Vec3) Vec3 {
+        return .{ .data = @min(a.data, b.data) };
+    }
+
+    pub fn clamp(self: Vec3, min_value: f32, max_value: f32) Vec3 {
+        return .{ .data = @min(@max(self.data, @as(@Vector(3, f32), @splat(min_value))), @as(@Vector(3, f32), @splat(max_value))) };
     }
 
     pub fn scale(self: Vec3, s: f32) Vec3 {
@@ -69,6 +77,10 @@ pub const Vec3 = struct {
 
     pub fn mul(a: Vec3, b: Vec3) Vec3 {
         return .{ .data = a.data * b.data };
+    }
+
+    pub fn div(a: Vec3, b: Vec3) Vec3 {
+        return .{ .data = a.data / b.data };
     }
 
     pub fn cross(a: Vec3, b: Vec3) Vec3 {
