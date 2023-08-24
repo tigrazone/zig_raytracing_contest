@@ -4,8 +4,10 @@ const linalg = @import("linalg.zig");
 
 const Mat4 = linalg.Mat4;
 const Vec3 = linalg.Vec3;
+const Vec3u = linalg.Vec3u;
 
 const vec3 = Vec3.init;
+const vec3u = Vec3u.init;
 const dot = Vec3.dot;
 const cross = Vec3.cross;
 const subtract = Vec3.subtract;
@@ -15,7 +17,9 @@ const CmdlineArgs = @import("cmdline_args.zig");
 const Gltf = @import("zgltf");
 const zigimg = @import("zigimg");
 
-
+test {
+    _ = @import("linalg.zig");
+}
 
 
 
@@ -375,7 +379,7 @@ const World = struct {
         return result;
     }
 
-    fn initCells(gltf: Gltf, cells: []Cell, bbox: Bbox, cell_dim: Vec3, resolution: [3]u32) !usize {
+    fn initCells(gltf: Gltf, cells: []Cell, bbox: Bbox, cell_dim: Vec3, resolution: Vec3u) !usize {
         @memset(cells, .{.first_triangle = 0, .num_triangles = 0});
         for (gltf.data.nodes.items) |node| {
             if (node.mesh != null) {
@@ -395,19 +399,15 @@ const World = struct {
                             const vertex_idx = indices.at(index_idx);
                             pos[i] = matrix.transformPosition(positions.at(vertex_idx));
                         }
-                        const min = Vec3.min(pos[0], Vec3.min(pos[1], pos[2])).subtract(bbox.min).div(cell_dim);
-                        const max = Vec3.max(pos[0], Vec3.max(pos[1], pos[2])).subtract(bbox.min).div(cell_dim);
-                        const zmin = std.math.clamp(@as(u32, @intFromFloat(min.z())), 0, resolution[2]-1);
-                        const zmax = std.math.clamp(@as(u32, @intFromFloat(max.z())), 0, resolution[2]-1);
-                        const ymin = std.math.clamp(@as(u32, @intFromFloat(min.y())), 0, resolution[1]-1);
-                        const ymax = std.math.clamp(@as(u32, @intFromFloat(max.y())), 0, resolution[1]-1);
-                        const xmin = std.math.clamp(@as(u32, @intFromFloat(min.x())), 0, resolution[0]-1);
-                        const xmax = std.math.clamp(@as(u32, @intFromFloat(max.x())), 0, resolution[0]-1);
+                        const minf = Vec3.min(pos[0], Vec3.min(pos[1], pos[2])).subtract(bbox.min).div(cell_dim);
+                        const maxf = Vec3.max(pos[0], Vec3.max(pos[1], pos[2])).subtract(bbox.min).div(cell_dim);
+                        const min = Vec3u.min(minf.toInt(u32), resolution.dec());
+                        const max = Vec3u.min(maxf.toInt(u32), resolution.dec());
 
-                        for (zmin..zmax+1) |z| {
-                            for (ymin..ymax+1) |y| {
-                                for (xmin..xmax+1) |x| {
-                                    const index = z * resolution[0] * resolution[1] + y * resolution[0] + x;
+                        for (min.z()..max.z()+1) |z| {
+                            for (min.y()..max.y()+1) |y| {
+                                for (min.x()..max.x()+1) |x| {
+                                    const index = z * resolution.x() * resolution.y() + y * resolution.x() + x;
                                     cells[index].num_triangles += 1;
                                 }
                             }
@@ -425,7 +425,7 @@ const World = struct {
         return result;
     }
 
-    fn initTriangles(gltf: Gltf, triangles: *std.MultiArrayList(Triangle), cells: []Cell, bbox: Bbox, cell_dim: Vec3, resolution: [3]u32) !void {
+    fn initTriangles(gltf: Gltf, triangles: *std.MultiArrayList(Triangle), cells: []Cell, bbox: Bbox, cell_dim: Vec3, resolution: Vec3u) !void {
         for (gltf.data.nodes.items) |node| {
             if (node.mesh != null) {
                 const mesh = gltf.data.meshes.items[node.mesh.?];
@@ -461,18 +461,15 @@ const World = struct {
                             .pos = Triangle.Pos.init(pos[0], pos[1], pos[2]),
                             .data = data,
                         };
-                        const min = Vec3.min(pos[0], Vec3.min(pos[1], pos[2])).subtract(bbox.min).div(cell_dim);
-                        const max = Vec3.max(pos[0], Vec3.max(pos[1], pos[2])).subtract(bbox.min).div(cell_dim);
-                        const zmin = std.math.clamp(@as(u32, @intFromFloat(min.z())), 0, resolution[2]-1);
-                        const zmax = std.math.clamp(@as(u32, @intFromFloat(max.z())), 0, resolution[2]-1);
-                        const ymin = std.math.clamp(@as(u32, @intFromFloat(min.y())), 0, resolution[1]-1);
-                        const ymax = std.math.clamp(@as(u32, @intFromFloat(max.y())), 0, resolution[1]-1);
-                        const xmin = std.math.clamp(@as(u32, @intFromFloat(min.x())), 0, resolution[0]-1);
-                        const xmax = std.math.clamp(@as(u32, @intFromFloat(max.x())), 0, resolution[0]-1);
-                        for (zmin..zmax+1) |z| {
-                            for (ymin..ymax+1) |y| {
-                                for (xmin..xmax+1) |x| {
-                                    const index = z * resolution[0] * resolution[1] + y * resolution[0] + x;
+                        const minf = Vec3.min(pos[0], Vec3.min(pos[1], pos[2])).subtract(bbox.min).div(cell_dim);
+                        const maxf = Vec3.max(pos[0], Vec3.max(pos[1], pos[2])).subtract(bbox.min).div(cell_dim);
+                        const min = Vec3u.min(minf.toInt(u32), resolution.dec());
+                        const max = Vec3u.min(maxf.toInt(u32), resolution.dec());
+
+                        for (min.z()..max.z()+1) |z| {
+                            for (min.y()..max.y()+1) |y| {
+                                for (min.x()..max.x()+1) |x| {
+                                    const index = z * resolution.x() * resolution.y() + y * resolution.x() + x;
                                     var cell = &cells[index];
                                     triangles.set(cell.first_triangle + cell.num_triangles, triangle);
                                     cell.num_triangles += 1;
@@ -496,12 +493,12 @@ const World = struct {
 
         const cells = try arena_allocator.alloc(Cell, resolution[0] * resolution[1] * resolution[2]);
 
-        const total_triangles_count = try initCells(gltf, cells, bbox, cell_dim, resolution);
+        const total_triangles_count = try initCells(gltf, cells, bbox, cell_dim, Vec3u.fromArray(resolution));
         std.log.info("Total triangle count: {}", .{total_triangles_count});
 
         var triangles = std.MultiArrayList(Triangle){};
         try triangles.resize(arena_allocator, total_triangles_count);
-        try initTriangles(gltf, &triangles, cells, bbox, cell_dim, resolution);
+        try initTriangles(gltf, &triangles, cells, bbox, cell_dim, Vec3u.fromArray(resolution));
 
         const materials = try arena_allocator.alloc(Material, gltf.data.materials.items.len);
         for (materials, 0..) |*material, i| {

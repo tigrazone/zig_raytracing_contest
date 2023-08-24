@@ -1,97 +1,128 @@
 const std = @import("std");
 const zigimg = @import("zigimg");
 
-pub const Vec3 = struct {
-    data: @Vector(3, f32),
+pub fn Vec(comptime size: usize, comptime T: type) type {
+    return struct {
+        const Self = @This();
+        const Data = @Vector(size, T);
 
-    pub fn x(self: Vec3) f32 {
-        return self.data[0];
-    }
-    pub fn y(self: Vec3) f32 {
-        return self.data[1];
-    }
-    pub fn z(self: Vec3) f32 {
-        return self.data[2];
-    }
+        data: Data,
 
-    pub fn zeroes() Vec3 {
-        return .{ .data = .{0.0, 0.0, 0.0}};
-    }
+        pub fn x(self: Self) T {
+            return self.data[0];
+        }
+        pub fn y(self: Self) T {
+            return self.data[1];
+        }
+        pub fn z(self: Self) T {
+            return self.data[2];
+        }
 
-    pub fn ones() Vec3 {
-        return .{ .data = .{1.0, 1.0, 1.0}};
-    }
+        pub fn zeroes() Self {
+            return .{ .data = .{0, 0, 0}};
+        }
 
-    pub fn init(_x: f32, _y: f32, _z: f32) Vec3 {
-        return .{ .data = .{_x, _y, _z}};
-    }
+        pub fn ones() Self {
+            return .{ .data = .{1, 1, 1}};
+        }
 
-    // pub fn sqrt(self: Vec3) Vec3 {
-    //     return .{ .data = @sqrt(self.data) };
-    // }
+        pub fn init(_x: T, _y: T, _z: T) Self {
+            return .{ .data = .{_x, _y, _z}};
+        }
 
-    pub fn max(a: Vec3, b: Vec3) Vec3 {
-        return .{ .data = @max(a.data, b.data) };
-    }
+        pub fn fromArray(array: [size]T) Self {
+            return .{ .data = array};
+        }
 
-    pub fn min(a: Vec3, b: Vec3) Vec3 {
-        return .{ .data = @min(a.data, b.data) };
-    }
+        pub fn fromScalar(s: T) Self {
+            return .{ .data = .{s, s, s}};
+        }
 
-    pub fn clamp(self: Vec3, min_value: f32, max_value: f32) Vec3 {
-        return .{ .data = @min(@max(self.data, @as(@Vector(3, f32), @splat(min_value))), @as(@Vector(3, f32), @splat(max_value))) };
-    }
+        pub fn max(a: Self, b: Self) Self {
+            return .{ .data = @max(a.data, b.data) };
+        }
 
-    pub fn scale(self: Vec3, s: f32) Vec3 {
-        return .{ .data = self.data * @as(@Vector(3, f32), @splat(s)) };
-    }
+        pub fn min(a: Self, b: Self) Self {
+            return .{ .data = @min(a.data, b.data) };
+        }
 
-    pub fn toRGB(self: Vec3) zigimg.color.Rgb24 {
-        const rgb = self.clamp(0.0, 0.999999).scale(256);
-        return .{
-            .r = @intFromFloat(rgb.data[0]),
-            .g = @intFromFloat(rgb.data[1]),
-            .b = @intFromFloat(rgb.data[2]),
-        };
-    }
+        pub fn clamp(self: Self, min_value: T, max_value: T) Self {
+            return min(self, max(fromScalar(min_value), fromScalar(max_value)));
+        }
 
-    pub fn length(self: Vec3) f32 {
-        return @sqrt(@reduce(.Add, self.data * self.data));
-    }
+        pub fn scale(self: Self, s: T) Self {
+            return .{ .data = self.data * @as(Data, @splat(s)) };
+        }
 
-    pub fn normalize(self: Vec3) Vec3 {
-        return self.scale(1.0 / self.length());
-    }
+        pub usingnamespace if (T == f32 and size == 3) struct {
+            pub fn toRGB(self: Self) zigimg.color.Rgb24 {
+                const rgb = self.clamp(0.0, 0.999999).scale(256);
+                return .{
+                    .r = @intFromFloat(rgb.data[0]),
+                    .g = @intFromFloat(rgb.data[1]),
+                    .b = @intFromFloat(rgb.data[2]),
+                };
+            }
+            pub fn toInt(self: Self, comptime U: type) Vec(size, U) {
+                return .{
+                    .data = .{
+                        @as(U, @intFromFloat(self.data[0])),
+                        @as(U, @intFromFloat(self.data[1])),
+                        @as(U, @intFromFloat(self.data[2])),
+                    }
+                };
+            }
+            pub fn length(self: Self) T {
+                return @sqrt(@reduce(.Add, self.data * self.data));
+            }
 
-    pub fn add(self: Vec3, b: Vec3) Vec3 {
-        return .{.data = self.data + b.data};
-    }
+            pub fn normalize(self: Self) Self {
+                return self.scale(1.0 / self.length());
+            }
+        } else struct {};
 
-    pub fn subtract(self: Vec3, b: Vec3) Vec3 {
-        return .{.data = self.data - b.data};
-    }
+        pub usingnamespace if (size == 3) struct {
+            pub fn cross(a: Self, b: Self) Self {
+                const tmp0 = @shuffle(f32, a.data, a.data ,@Vector(3, i32){1,2,0});
+                const tmp1 = @shuffle(f32, b.data, b.data ,@Vector(3, i32){2,0,1});
+                const tmp2 = @shuffle(f32, a.data, a.data ,@Vector(3, i32){2,0,1});
+                const tmp3 = @shuffle(f32, b.data, b.data ,@Vector(3, i32){1,2,0});
+                return .{ .data = tmp0*tmp1-tmp2*tmp3 };
+            }
+        } else struct {};
 
-    pub fn dot(a: Vec3, b: Vec3) f32 {
-        return @reduce(.Add, a.data * b.data);
-    }
+        pub fn add(self: Self, b: Self) Self {
+            return .{.data = self.data + b.data};
+        }
 
-    pub fn mul(a: Vec3, b: Vec3) Vec3 {
-        return .{ .data = a.data * b.data };
-    }
+        pub fn subtract(self: Self, b: Self) Self {
+            return .{.data = self.data - b.data};
+        }
 
-    pub fn div(a: Vec3, b: Vec3) Vec3 {
-        return .{ .data = a.data / b.data };
-    }
+        pub fn dot(a: Self, b: Self) T {
+            return @reduce(.Add, a.data * b.data);
+        }
 
-    pub fn cross(a: Vec3, b: Vec3) Vec3 {
-        const tmp0 = @shuffle(f32, a.data, a.data ,@Vector(3, i32){1,2,0});
-        const tmp1 = @shuffle(f32, b.data, b.data ,@Vector(3, i32){2,0,1});
-        const tmp2 = @shuffle(f32, a.data, a.data ,@Vector(3, i32){2,0,1});
-        const tmp3 = @shuffle(f32, b.data, b.data ,@Vector(3, i32){1,2,0});
-        return .{ .data = tmp0*tmp1-tmp2*tmp3 };
-    }
+        pub fn mul(a: Self, b: Self) Self {
+            return .{ .data = a.data * b.data };
+        }
 
-};
+        pub fn div(a: Self, b: Self) Self {
+            return .{ .data = a.data / b.data };
+        }
+
+        pub fn inc(self: Self) Self {
+            return self.add(Self.fromScalar(1));
+        }
+
+        pub fn dec(self: Self) Self {
+            return self.subtract(Self.fromScalar(1));
+        }
+    };
+}
+
+pub const Vec3 = Vec(3, f32);
+pub const Vec3u = Vec(3, u32);
 
 const vec3 = Vec3.init;
 
