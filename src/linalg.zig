@@ -81,6 +81,14 @@ pub fn Vec(comptime size: usize, comptime T: type) type {
             }
         } else struct {};
 
+        pub usingnamespace if (T == bool) struct {
+            pub fn select(self: Self, a: anytype, b: anytype) @TypeOf(a, b) {
+                const Result = @TypeOf(a, b);
+                const Elem = std.meta.Child(std.meta.FieldType(Result, .data));
+                return .{.data = @select(Elem, self.data, a.data, b.data)};
+            }
+        } else struct {};
+
         pub usingnamespace if (size == 3) struct {
             pub fn cross(a: Self, b: Self) Self {
                 const tmp0 = @shuffle(f32, a.data, a.data ,@Vector(3, i32){1,2,0});
@@ -118,6 +126,10 @@ pub fn Vec(comptime size: usize, comptime T: type) type {
         pub fn dec(self: Self) Self {
             return self.subtract(Self.fromScalar(1));
         }
+
+        pub fn lessThan(a: Self, b: Self) Vec(size, bool) {
+            return .{.data = a.data < b.data};
+        }
     };
 }
 
@@ -125,6 +137,7 @@ pub const Vec3 = Vec(3, f32);
 pub const Vec3u = Vec(3, u32);
 
 const vec3 = Vec3.init;
+const vec3u = Vec3u.init;
 
 test "cross product" {
     const a = vec3(1,-8,12);
@@ -201,7 +214,89 @@ pub const Bbox = struct {
     pub fn size(self: Bbox) Vec3 {
         return subtract(self.max, self.min);
     }
+
+    pub fn rayIntersection(self: Bbox, ray: Ray, t: *f32) bool
+    {
+        const sign = ray.dir.lessThan(Vec3.zeroes());
+
+        const min = sign.select(self.max, self.min).subtract(ray.orig).div(ray.dir);
+        const max = sign.select(self.min, self.max).subtract(ray.orig).div(ray.dir);
+
+        var tmin = min.x();
+        var tmax = max.x();
+
+        if ((tmin > max.y()) or (tmax < min.y()))
+            return false;
+
+        tmin = @max(tmin, min.y());
+        tmax = @min(tmax, max.y());
+
+        if ((tmin > max.z()) or (tmax < min.z()))
+            return false;
+
+        tmin = @max(tmin, min.z());
+        tmax = @min(tmax, max.z());
+
+        t.* = tmin;
+
+        return true;
+    }
 };
+
+test "bbox rayIntersection 1" {
+    const bbox = Bbox{
+        .min = Vec3.fromScalar(-1),
+        .max = Vec3.fromScalar(1),
+    };
+    const ray = Ray{
+        .orig = vec3(0, 0, 5),
+        .dir = vec3(0, 0, -1),
+    };
+    var t: f32 = undefined;
+    try std.testing.expect(bbox.rayIntersection(ray, &t));
+    try std.testing.expectApproxEqAbs(@as(f32, 4), t, 0.0001);
+}
+
+test "bbox rayIntersection 2" {
+    const bbox = Bbox{
+        .min = Vec3.fromScalar(1),
+        .max = Vec3.fromScalar(2),
+    };
+    const ray = Ray{
+        .orig = vec3(0, 0, 0),
+        .dir = vec3(1, 1, 1).normalize(),
+    };
+    var t: f32 = undefined;
+    try std.testing.expect(bbox.rayIntersection(ray, &t));
+    try std.testing.expectApproxEqAbs(@sqrt(@as(f32, 3)), t, 0.0001);
+}
+
+test "bbox rayIntersection 3 (if orig is inside bbox => t < 0)" {
+    const bbox = Bbox{
+        .min = Vec3.fromScalar(-1),
+        .max = Vec3.fromScalar(3),
+    };
+    const ray = Ray{
+        .orig = vec3(0, 0, 0),
+        .dir = vec3(1, 1, 0).normalize(),
+    };
+    var t: f32 = undefined;
+    try std.testing.expect(bbox.rayIntersection(ray, &t));
+    try std.testing.expectApproxEqAbs(-@sqrt(@as(f32, 2)), t, 0.0001);
+}
+
+test "bbox rayIntersection 4 (miss)" {
+    const bbox = Bbox{
+        .min = Vec3.fromScalar(-1),
+        .max = Vec3.fromScalar(3),
+    };
+    const ray = Ray{
+        .orig = vec3(5, 5, 5),
+        .dir = vec3(1, 1, 0).normalize(),
+    };
+    var t: f32 = undefined;
+    try std.testing.expect(bbox.rayIntersection(ray, &t) == false);
+}
 
 pub const Triangle = struct {
     v0: Vec3,
