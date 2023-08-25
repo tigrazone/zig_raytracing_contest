@@ -7,6 +7,7 @@ const Vec3 = linalg.Vec3;
 const Vec3u = linalg.Vec3u;
 const Ray = linalg.Ray;
 const Bbox = linalg.Bbox;
+const Grid = linalg.Grid;
 
 const vec3 = Vec3.init;
 const vec3u = Vec3u.init;
@@ -314,10 +315,8 @@ const World = struct {
         num_triangles: u32,
     };
 
+    grid: Grid,
     cells: []Cell,
-    bbox: Bbox,
-    resolution: [3]u32,
-    cell_dim: Vec3,
     triangles: std.MultiArrayList(Triangle),
     materials: []Material,
 
@@ -346,7 +345,7 @@ const World = struct {
         return result;
     }
 
-    fn initCells(gltf: Gltf, cells: []Cell, bbox: Bbox, cell_dim: Vec3, resolution: Vec3u) !usize {
+    fn initCells(gltf: Gltf, cells: []Cell, grid: Grid) !usize {
         @memset(cells, .{.first_triangle = 0, .num_triangles = 0});
         for (gltf.data.nodes.items) |node| {
             if (node.mesh != null) {
@@ -366,15 +365,13 @@ const World = struct {
                             const vertex_idx = indices.at(index_idx);
                             pos[i] = matrix.transformPosition(positions.at(vertex_idx));
                         }
-                        const minf = Vec3.min(pos[0], Vec3.min(pos[1], pos[2])).subtract(bbox.min).div(cell_dim);
-                        const maxf = Vec3.max(pos[0], Vec3.max(pos[1], pos[2])).subtract(bbox.min).div(cell_dim);
-                        const min = Vec3u.min(minf.toInt(u32), resolution.dec());
-                        const max = Vec3u.min(maxf.toInt(u32), resolution.dec());
+                        const min = grid.getCellPos(Vec3.min(pos[0], Vec3.min(pos[1], pos[2])));
+                        const max = grid.getCellPos(Vec3.max(pos[0], Vec3.max(pos[1], pos[2])));
 
                         for (min.z()..max.z()+1) |z| {
                             for (min.y()..max.y()+1) |y| {
                                 for (min.x()..max.x()+1) |x| {
-                                    const index = z * resolution.x() * resolution.y() + y * resolution.x() + x;
+                                    const index = z * grid.resolution.x() * grid.resolution.y() + y * grid.resolution.x() + x;
                                     cells[index].num_triangles += 1;
                                 }
                             }
@@ -392,7 +389,7 @@ const World = struct {
         return result;
     }
 
-    fn initTriangles(gltf: Gltf, triangles: *std.MultiArrayList(Triangle), cells: []Cell, bbox: Bbox, cell_dim: Vec3, resolution: Vec3u) !void {
+    fn initTriangles(gltf: Gltf, triangles: *std.MultiArrayList(Triangle), cells: []Cell, grid: Grid) !void {
         for (gltf.data.nodes.items) |node| {
             if (node.mesh != null) {
                 const mesh = gltf.data.meshes.items[node.mesh.?];
@@ -428,15 +425,13 @@ const World = struct {
                             .pos = Triangle.Pos.init(pos[0], pos[1], pos[2]),
                             .data = data,
                         };
-                        const minf = Vec3.min(pos[0], Vec3.min(pos[1], pos[2])).subtract(bbox.min).div(cell_dim);
-                        const maxf = Vec3.max(pos[0], Vec3.max(pos[1], pos[2])).subtract(bbox.min).div(cell_dim);
-                        const min = Vec3u.min(minf.toInt(u32), resolution.dec());
-                        const max = Vec3u.min(maxf.toInt(u32), resolution.dec());
+                        const min = grid.getCellPos(Vec3.min(pos[0], Vec3.min(pos[1], pos[2])));
+                        const max = grid.getCellPos(Vec3.max(pos[0], Vec3.max(pos[1], pos[2])));
 
                         for (min.z()..max.z()+1) |z| {
                             for (min.y()..max.y()+1) |y| {
                                 for (min.x()..max.x()+1) |x| {
-                                    const index = z * resolution.x() * resolution.y() + y * resolution.x() + x;
+                                    const index = z * grid.resolution.x() * grid.resolution.y() + y * grid.resolution.x() + x;
                                     var cell = &cells[index];
                                     triangles.set(cell.first_triangle + cell.num_triangles, triangle);
                                     cell.num_triangles += 1;
@@ -456,16 +451,21 @@ const World = struct {
 
         const resolution: [3]u32 = .{10, 10, 10};
         std.log.info("Grid resolution: {any}", .{resolution});
-        const cell_dim = Vec3.div(bbox.size(), vec3(resolution[0], resolution[1], resolution[2]));
 
         const cells = try arena_allocator.alloc(Cell, resolution[0] * resolution[1] * resolution[2]);
 
-        const total_triangles_count = try initCells(gltf, cells, bbox, cell_dim, Vec3u.fromArray(resolution));
+        const grid = Grid{
+            .bbox = bbox,
+            .resolution = Vec3u.fromArray(resolution),
+            .cell_size = Vec3.div(bbox.size(), vec3(resolution[0], resolution[1], resolution[2])),
+        };
+
+        const total_triangles_count = try initCells(gltf, cells, grid);
         std.log.info("Total triangle count: {}", .{total_triangles_count});
 
         var triangles = std.MultiArrayList(Triangle){};
         try triangles.resize(arena_allocator, total_triangles_count);
-        try initTriangles(gltf, &triangles, cells, bbox, cell_dim, Vec3u.fromArray(resolution));
+        try initTriangles(gltf, &triangles, cells, grid);
 
         const materials = try arena_allocator.alloc(Material, gltf.data.materials.items.len);
         for (materials, 0..) |*material, i| {
@@ -474,10 +474,8 @@ const World = struct {
         std.log.info("Materials count: {}", .{materials.len});
 
         return .{
+            .grid = grid,
             .cells = cells,
-            .bbox = bbox,
-            .resolution = resolution,
-            .cell_dim = cell_dim,
             .triangles = triangles,
             .materials = materials,
         };
@@ -495,10 +493,16 @@ const World = struct {
         inline for (0..BATCH_SIZE) |i| {
             batch[i].hit.t = std.math.inf(f32);
         }
-        for (world.triangles.items(.pos), 0..) |triangle, triangle_idx|
-        {
-            inline for (0..BATCH_SIZE) |i| {
-                const sample = &batch[i];
+        for (0..BATCH_SIZE) |i| {
+            const sample = &batch[i];
+            var t_hit: f32 = undefined;
+            if (world.grid.bbox.rayIntersection(sample.ray, &t_hit) == false) {
+                continue;
+            }
+            t_hit = @max(0, t_hit);
+
+            for (world.triangles.items(.pos), 0..) |triangle, triangle_idx|
+            {
                 var hit = Hit{
                     .t = undefined,
                     .u = undefined,

@@ -298,6 +298,17 @@ test "bbox rayIntersection 4 (miss)" {
     try std.testing.expect(bbox.rayIntersection(ray, &t) == false);
 }
 
+pub const Grid = struct {
+    bbox: Bbox,
+    resolution: Vec3u,
+    cell_size: Vec3,
+
+    pub fn getCellPos(grid: Grid, point: Vec3) Vec3u {
+        const pos = point.subtract(grid.bbox.min).div(grid.cell_size).toInt(u32);
+        return Vec3u.min(pos, grid.resolution.dec());
+    }
+};
+
 pub const Triangle = struct {
     v0: Vec3,
     e1: Vec3,
