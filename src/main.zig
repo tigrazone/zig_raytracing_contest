@@ -505,24 +505,17 @@ const World = struct {
         );
     }
 
-    fn render(world: World, batch: []Sample) void {
-        inline for (0..BATCH_SIZE) |i| {
-            batch[i].hit.t = std.math.inf(f32);
-        }
-        var ray_mask = std.bit_set.IntegerBitSet(BATCH_SIZE).initEmpty();
-        inline for (0..BATCH_SIZE) |i| {
-            const sample = &batch[i];
-            if (world.grid.traceRay(sample.ray)) |grid_it| {
-                ray_mask.set(i);
-                sample.grid_it = grid_it;
-            }
-        }
+    fn render(world: World, ray: Ray) Vec3 {
         const triangle_pos = world.triangles.items(.pos);
-        while (ray_mask.mask != 0) {
-            var ray_it = ray_mask.iterator(.{});
-            while (ray_it.next()) |i| {
-                const sample = &batch[i];
-                const grid_it = &sample.grid_it;
+        var nearest_hit = Hit{
+            .t = std.math.inf(f32),
+            .u = undefined,
+            .v = undefined,
+            .triangle_idx = undefined,
+        };
+        var tmp = world.grid.traceRay(ray);
+        if (tmp) |*grid_it| {
+            while (true) {
                 const cell_idx = world.grid.getCellIdx(grid_it.cell[0], grid_it.cell[1], grid_it.cell[2]);
                 const cell = world.cells[cell_idx];
                 const begin = cell.first_triangle;
@@ -536,91 +529,69 @@ const World = struct {
                         .v = undefined,
                         .triangle_idx = triangle_idx
                     };
-                    if (triangle.rayIntersection(sample.ray, &hit.t, &hit.u, &hit.v)) {
-                        if (sample.hit.t > hit.t and hit.t > 0) {
-                            sample.hit = hit;
+                    if (triangle.rayIntersection(ray, &hit.t, &hit.u, &hit.v)) {
+                        if (nearest_hit.t > hit.t and hit.t > 0) {
+                            nearest_hit = hit;
                         }
                     }
                 }
                 const t_next_crossing = grid_it.next();
-                if (t_next_crossing == std.math.inf(f32) or sample.hit.t < t_next_crossing) {
-                    ray_mask.unset(i);
+                if (nearest_hit.t <= t_next_crossing) {
+                    break;
                 }
             }
         }
         const triangle_data = world.triangles.items(.data);
-        inline for (0..BATCH_SIZE) |i| {
-            const sample = &batch[i];
-            if (sample.hit.t < std.math.inf(f32)) {
-                const triangle = triangle_data[sample.hit.triangle_idx];
-                const texcoord = triangle.interpolate("texcoord", sample.hit.u, sample.hit.v);
-                sample.color = world.materials[triangle.material_idx].getColor(texcoord[0], texcoord[1]);
-            }
-            else {
-                sample.color = getEnvColor(sample.ray);
-            }
+        if (nearest_hit.t < std.math.inf(f32)) {
+            const triangle = triangle_data[nearest_hit.triangle_idx];
+            const texcoord = triangle.interpolate("texcoord", nearest_hit.u, nearest_hit.v);
+            return world.materials[triangle.material_idx].getColor(texcoord[0], texcoord[1]);
+        }
+        else {
+            return getEnvColor(ray);
         }
     }
-};
-
-const BATCH_SIZE = 64;
-
-const Sample = struct {
-    ray: Ray,
-    hit: Hit,
-    grid_it: Grid.Iterator,
-    color: Vec3,
 };
 
 const Scene = struct {
     camera: Camera,
     world: World,
-    samples: []Sample,
+    pixels: []Vec3,
+    do_not_delete_me: []Vec3,
 
     fn load(gltf: Gltf, args: CmdlineArgs, arena_allocator: std.mem.Allocator) !Scene {
         const camera = try Camera.init(gltf, args.width, args.height);
         const world = try World.init(gltf, arena_allocator);
 
-        var samples = try arena_allocator.alloc(Sample, std.mem.alignForward(usize, camera.w * camera.h, BATCH_SIZE));
-        errdefer arena_allocator.free(samples);
-
-        for (0..camera.h) |y| {
-            for (0..camera.w) |x| {
-                samples[y*camera.w+x] = .{
-                    .ray = camera.getRandomRay(@intCast(x), @intCast(y)),
-                    .color = undefined,
-                    .grid_it = undefined,
-                    .hit = undefined,
-                };
-            }
-        }
+        var pixels = try arena_allocator.alloc(Vec3, camera.w * camera.h);
+        errdefer arena_allocator.free(pixels);
 
         return .{
             .camera = camera,
             .world = world,
-            .samples = samples,
+            .pixels = pixels,
+            .do_not_delete_me = undefined,
         };
     }
 
-    fn renderSamples(self: Scene, thread_idx: usize, thread_num: usize) void {
-        const num_batches = self.samples.len / BATCH_SIZE;
-        const batches_per_thread = (num_batches + thread_num - 1) / thread_num;
-        const first_batch = batches_per_thread * thread_idx;
-        var begin = first_batch * BATCH_SIZE;
-        for (0..batches_per_thread) |_| {
-            if (begin >= self.samples.len) {
+    fn renderWorker(self: Scene, thread_idx: usize, thread_num: usize) void {
+        const pixels_per_thread = (self.pixels.len + thread_num - 1) / thread_num;
+        var i = pixels_per_thread * thread_idx;
+        for (0..pixels_per_thread) |_| {
+            if (i >= self.pixels.len) {
                 break;
             }
-            const end = begin + BATCH_SIZE;
-            const batch = self.samples[begin..end];
-            self.world.render(batch);
-            begin = end;
+            const x = @mod(i, self.camera.w);
+            const y = i / self.camera.w;
+            const ray = self.camera.getRandomRay(@intCast(x), @intCast(y));
+            self.pixels[i] = self.world.render(ray);
+            i += 1;
         }
     }
 
     fn render(self: Scene, threads: []std.Thread) !void {
         for (threads, 0..) |*thread, i| {
-            thread.* = try std.Thread.spawn(.{}, renderSamples, .{
+            thread.* = try std.Thread.spawn(.{}, renderWorker, .{
                 self, i, threads.len
             });
         }
@@ -631,7 +602,7 @@ const Scene = struct {
 
     fn getPixelColor(self: Scene, x: u16, y: u16) zigimg.color.Rgb24
     {
-        return self.samples[y*self.camera.w+x].color.toRGB();
+        return self.pixels[y*self.camera.w+x].toRGB();
     }
 };
 
