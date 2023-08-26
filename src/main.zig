@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const linalg = @import("linalg.zig");
 
@@ -689,6 +690,9 @@ fn loadGltf(_allocator: std.mem.Allocator, path: []const u8, threads: []std.Thre
     const gltf_dir = std.fs.path.dirname(path).?;
 
     var gltf = Gltf.init(_allocator);
+    errdefer gltf.deinit();
+
+    std.log.debug("Loading scene {s}", .{path});
     const arena_allocator = gltf.arena.allocator();
     const buf = try loadFile(path, arena_allocator);
     try gltf.parse(buf);
@@ -737,7 +741,7 @@ fn getDuration(start_time: i128) @TypeOf(std.fmt.fmtDuration(1)) {
 }
 
 pub const std_options = struct {
-    pub const log_level = .info;
+    pub const log_level = if (builtin.mode == .Debug) .debug else .info;
 };
 
 const CmdlineArgs = struct {
@@ -748,6 +752,8 @@ const CmdlineArgs = struct {
 };
 
 pub fn main() !void {
+    std.log.info("{}", .{std_options.log_level});
+
     const start_time = std.time.nanoTimestamp();
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
