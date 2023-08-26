@@ -336,6 +336,10 @@ pub const Grid = struct {
         };
     }
 
+    pub fn numCells(grid: Grid) u32 {
+        return @reduce(.Mul, grid.resolution.data);
+    }
+
     pub fn getCellPos(grid: Grid, point: Vec3) Vec3u {
         const pos = point.subtract(grid.bbox.min).div(grid.cell_size).toInt(u32);
         return Vec3u.min(pos, grid.resolution.dec());

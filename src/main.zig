@@ -380,13 +380,25 @@ const World = struct {
                 }
             }
         }
-        var result: u32 = 0;
+        var min_triangles: u32 = std.math.maxInt(u32);
+        var max_triangles: u32 = 0;
+        var empty_cells: u32 = 0;
+        var total_triangles_count: u32 = 0;
         for (cells) |*cell| {
-            cell.first_triangle = result;
-            result += cell.num_triangles;
+            if (cell.num_triangles != 0) {
+                min_triangles = @min(min_triangles, cell.num_triangles);
+                max_triangles = @max(max_triangles, cell.num_triangles);
+            } else {
+                empty_cells += 1;
+            }
+            cell.first_triangle = total_triangles_count;
+            total_triangles_count += cell.num_triangles;
             cell.num_triangles = 0;
         }
-        return result;
+        const mean_triangles = total_triangles_count / (grid.numCells() - empty_cells);
+        std.log.info("Empty cells: {}/{} min triangles: {} max triangles: {} mean_triangles: {}",
+            .{empty_cells, grid.numCells(), min_triangles, max_triangles, mean_triangles});
+        return total_triangles_count;
     }
 
     fn initTriangles(gltf: Gltf, triangles: *std.MultiArrayList(Triangle), cells: []Cell, grid: Grid) !void {
@@ -449,7 +461,7 @@ const World = struct {
         const unique_triangles = try calcBbox(gltf, &bbox);
         std.log.info("Unique triangle count: {}", .{unique_triangles});
 
-        const resolution: [3]u32 = .{10, 10, 10};
+        const resolution: [3]u32 = .{100, 100, 100};
         std.log.info("Grid resolution: {any}", .{resolution});
 
         const cells = try arena_allocator.alloc(Cell, resolution[0] * resolution[1] * resolution[2]);
@@ -769,6 +781,7 @@ pub fn main() !void {
     var img = try zigimg.Image.create(allocator, w, h, .rgb24);
     defer img.deinit();
 
+    const resolve_time = std.time.nanoTimestamp();
     for (0..h) |y| {
         for (0..w) |x| {
             const row = h - 1 - y;
@@ -776,8 +789,11 @@ pub fn main() !void {
             img.pixels.rgb24[row*w+column] = scene.getPixelColor(@intCast(x), @intCast(y));
         }
     }
+    std.log.info("Resolved in {}", .{getDuration(resolve_time)});
 
+    const save_time = std.time.nanoTimestamp();
     try img.writeToFilePath(args.options.out, .{.png = .{}});
+    std.log.info("Saved in {}", .{getDuration(save_time)});
 
     std.log.info("Done in {}", .{getDuration(start_time)});
 }
