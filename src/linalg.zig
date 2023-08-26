@@ -133,6 +133,10 @@ pub fn Vec(comptime size: usize, comptime T: type) type {
             return @reduce(.Add, a.data * b.data);
         }
 
+        pub fn reduceMul(self: Self) T {
+            return @reduce(.Mul, self.data);
+        }
+
         pub fn mul(a: Self, b: Self) Self {
             return .{ .data = a.data * b.data };
         }
@@ -325,19 +329,16 @@ pub const Grid = struct {
     resolution: Vec3u,
     cell_size: Vec3,
 
-    pub fn init(bbox: Bbox, resolution: [3]u32) Grid {
+    pub fn init(bbox: Bbox, resolution: Vec3u) Grid {
         return .{
             .bbox = bbox,
-            .resolution = Vec3u.fromArray(resolution),
-            .cell_size = Vec3.div(bbox.size(), vec3(
-                @floatFromInt(resolution[0]),
-                @floatFromInt(resolution[1]),
-                @floatFromInt(resolution[2]))),
+            .resolution = resolution,
+            .cell_size = Vec3.div(bbox.size(), resolution.toFloat(f32)),
         };
     }
 
     pub fn numCells(grid: Grid) u32 {
-        return @reduce(.Mul, grid.resolution.data);
+        return grid.resolution.reduceMul();
     }
 
     pub fn getCellPos(grid: Grid, point: Vec3) Vec3u {

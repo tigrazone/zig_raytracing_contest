@@ -461,10 +461,17 @@ const World = struct {
         const unique_triangles = try calcBbox(gltf, &bbox);
         std.log.info("Unique triangle count: {}", .{unique_triangles});
 
-        const resolution: [3]u32 = .{100, 100, 100};
-        std.log.info("Grid resolution: {any}", .{resolution});
+        // const triangles_density = @as(f32, @floatFromInt(unique_triangles)) / bbox.size().reduceMul();
+        // const recommended_resolution = bbox.size()
+        //     .mul(Vec3.fromScalar(std.math.pow(f32, triangles_density, 1.0 / 3.0)))
+        //     .toInt(u32)
+        //     .clamp(1, 128);
+        // std.log.info("Grid recommended resolution: {any}", .{recommended_resolution});
 
-        const cells = try arena_allocator.alloc(Cell, resolution[0] * resolution[1] * resolution[2]);
+        const resolution = vec3u(100, 100, 100);
+        std.log.info("Grid resolution: {any}", .{resolution.data});
+
+        const cells = try arena_allocator.alloc(Cell, resolution.reduceMul());
 
         const grid = Grid.init(bbox, resolution);
 
