@@ -23,19 +23,19 @@
 	[
 		{
 			"name": "ReleaseFast Sponza",
-			"shell_cmd": "zig build run -Doptimize=ReleaseFast -- --in $project_path/models/sponza/Sponza.gltf --out $project_path/output.png --height 1080",
+			"shell_cmd": "zig build run -Doptimize=ReleaseFast -- --in $project_path/models/Sponza/Sponza.gltf --out $project_path/output.png --height 1080",
 			"working_dir": "$project_path",
 			"file_regex": "(.*?):(\\d+):(\\d+): (error: .*)",
 		},
 		{
 			"name": "ReleaseSafe Sponza",
-			"shell_cmd": "zig build run -Doptimize=ReleaseSafe -- --in $project_path/models/sponza/Sponza.gltf --out $project_path/output.png --height 300",
+			"shell_cmd": "zig build run -Doptimize=ReleaseSafe -- --in $project_path/models/Sponza/Sponza.gltf --out $project_path/output.png --height 300",
 			"working_dir": "$project_path",
 			"file_regex": "(.*?):(\\d+):(\\d+): (error: .*)",
 		},
 		{
 			"name": "Debug Sponza",
-			"shell_cmd": "zig build run -Doptimize=Debug -- --in $project_path/models/sponza/Sponza.gltf --out $project_path/output.png --height 50",
+			"shell_cmd": "zig build run -Doptimize=Debug -- --in $project_path/models/Sponza/Sponza.gltf --out $project_path/output.png --height 50",
 			"working_dir": "$project_path",
 			"file_regex": "(.*?):(\\d+):(\\d+): (error: .*)",
 		},
