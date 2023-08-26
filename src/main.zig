@@ -371,7 +371,7 @@ const World = struct {
                         for (min.z()..max.z()+1) |z| {
                             for (min.y()..max.y()+1) |y| {
                                 for (min.x()..max.x()+1) |x| {
-                                    const index = z * grid.resolution.x() * grid.resolution.y() + y * grid.resolution.x() + x;
+                                    const index = grid.getCellIdx(x,y,z);
                                     cells[index].num_triangles += 1;
                                 }
                             }
@@ -431,7 +431,7 @@ const World = struct {
                         for (min.z()..max.z()+1) |z| {
                             for (min.y()..max.y()+1) |y| {
                                 for (min.x()..max.x()+1) |x| {
-                                    const index = z * grid.resolution.x() * grid.resolution.y() + y * grid.resolution.x() + x;
+                                    const index = grid.getCellIdx(x,y,z);
                                     var cell = &cells[index];
                                     triangles.set(cell.first_triangle + cell.num_triangles, triangle);
                                     cell.num_triangles += 1;
@@ -489,25 +489,37 @@ const World = struct {
         inline for (0..BATCH_SIZE) |i| {
             batch[i].hit.t = std.math.inf(f32);
         }
+        const triangle_pos = world.triangles.items(.pos);
         for (0..BATCH_SIZE) |i| {
             const sample = &batch[i];
-            var t_hit: f32 = undefined;
-            if (world.grid.bbox.rayIntersection(sample.ray, &t_hit) == false) {
-                continue;
-            }
-            t_hit = @max(0, t_hit);
-
-            for (world.triangles.items(.pos), 0..) |triangle, triangle_idx|
-            {
-                var hit = Hit{
-                    .t = undefined,
-                    .u = undefined,
-                    .v = undefined,
-                    .triangle_idx = triangle_idx
-                };
-                if (triangle.rayIntersection(sample.ray, &hit.t, &hit.u, &hit.v)) {
-                    if (sample.hit.t > hit.t and hit.t > 0) {
-                        sample.hit = hit;
+            var tmp = world.grid.traceRay(sample.ray);
+            if (tmp) |*it| {
+                while (true) {
+                    const cell_idx = world.grid.getCellIdx(it.cell[0], it.cell[1], it.cell[2]);
+                    const cell = world.cells[cell_idx];
+                    const begin = cell.first_triangle;
+                    const end = begin + cell.num_triangles;
+                    for (begin..end) |triangle_idx|
+                    {
+                        const triangle = triangle_pos[triangle_idx];
+                        var hit = Hit{
+                            .t = undefined,
+                            .u = undefined,
+                            .v = undefined,
+                            .triangle_idx = triangle_idx
+                        };
+                        if (triangle.rayIntersection(sample.ray, &hit.t, &hit.u, &hit.v)) {
+                            if (sample.hit.t > hit.t and hit.t > 0) {
+                                sample.hit = hit;
+                            }
+                        }
+                    }
+                    const t_next_crossing = it.next();
+                    if (t_next_crossing == std.math.inf(f32)) {
+                        break;
+                    }
+                    if (sample.hit.t < t_next_crossing) {
+                        break;
                     }
                 }
             }

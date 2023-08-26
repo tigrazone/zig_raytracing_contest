@@ -341,6 +341,10 @@ pub const Grid = struct {
         return Vec3u.min(pos, grid.resolution.dec());
     }
 
+    pub fn getCellIdx(grid: Grid, x: usize, y: usize, z: usize) usize {
+        return z * grid.resolution.x() * grid.resolution.y() + y * grid.resolution.x() + x;
+    }
+
     pub fn traceRay(grid: Grid, ray: Ray) ?Iterator {
         var t_hit: f32 = undefined;
         if (grid.bbox.rayIntersection(ray, &t_hit) == false) {
@@ -376,7 +380,7 @@ pub const Grid = struct {
         t_delta: [3]f32,
         t_next_crossing: [3]f32,
 
-        fn next(self: *Iterator) f32 {
+        pub fn next(self: *Iterator) f32 {
             const k: u3 =
                 (@as(u3, @intCast(@intFromBool(self.t_next_crossing[0] < self.t_next_crossing[1]))) << 2) +
                 (@as(u3, @intCast(@intFromBool(self.t_next_crossing[0] < self.t_next_crossing[2]))) << 1) +
