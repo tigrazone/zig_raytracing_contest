@@ -378,7 +378,7 @@ pub const Grid = struct {
         return it;
     }
 
-    const Iterator = struct {
+    pub const Iterator = struct {
         cell: [3]u32,
         exit: [3]u32,
         step: [3]u32,

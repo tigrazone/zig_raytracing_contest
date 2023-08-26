@@ -509,38 +509,42 @@ const World = struct {
         inline for (0..BATCH_SIZE) |i| {
             batch[i].hit.t = std.math.inf(f32);
         }
-        const triangle_pos = world.triangles.items(.pos);
-        for (0..BATCH_SIZE) |i| {
+        var ray_mask = std.bit_set.IntegerBitSet(BATCH_SIZE).initEmpty();
+        inline for (0..BATCH_SIZE) |i| {
             const sample = &batch[i];
-            var tmp = world.grid.traceRay(sample.ray);
-            if (tmp) |*it| {
-                while (true) {
-                    const cell_idx = world.grid.getCellIdx(it.cell[0], it.cell[1], it.cell[2]);
-                    const cell = world.cells[cell_idx];
-                    const begin = cell.first_triangle;
-                    const end = begin + cell.num_triangles;
-                    for (begin..end) |triangle_idx|
-                    {
-                        const triangle = triangle_pos[triangle_idx];
-                        var hit = Hit{
-                            .t = undefined,
-                            .u = undefined,
-                            .v = undefined,
-                            .triangle_idx = triangle_idx
-                        };
-                        if (triangle.rayIntersection(sample.ray, &hit.t, &hit.u, &hit.v)) {
-                            if (sample.hit.t > hit.t and hit.t > 0) {
-                                sample.hit = hit;
-                            }
+            if (world.grid.traceRay(sample.ray)) |grid_it| {
+                ray_mask.set(i);
+                sample.grid_it = grid_it;
+            }
+        }
+        const triangle_pos = world.triangles.items(.pos);
+        while (ray_mask.mask != 0) {
+            var ray_it = ray_mask.iterator(.{});
+            while (ray_it.next()) |i| {
+                const sample = &batch[i];
+                const grid_it = &sample.grid_it;
+                const cell_idx = world.grid.getCellIdx(grid_it.cell[0], grid_it.cell[1], grid_it.cell[2]);
+                const cell = world.cells[cell_idx];
+                const begin = cell.first_triangle;
+                const end = begin + cell.num_triangles;
+                for (begin..end) |triangle_idx|
+                {
+                    const triangle = triangle_pos[triangle_idx];
+                    var hit = Hit{
+                        .t = undefined,
+                        .u = undefined,
+                        .v = undefined,
+                        .triangle_idx = triangle_idx
+                    };
+                    if (triangle.rayIntersection(sample.ray, &hit.t, &hit.u, &hit.v)) {
+                        if (sample.hit.t > hit.t and hit.t > 0) {
+                            sample.hit = hit;
                         }
                     }
-                    const t_next_crossing = it.next();
-                    if (t_next_crossing == std.math.inf(f32)) {
-                        break;
-                    }
-                    if (sample.hit.t < t_next_crossing) {
-                        break;
-                    }
+                }
+                const t_next_crossing = grid_it.next();
+                if (t_next_crossing == std.math.inf(f32) or sample.hit.t < t_next_crossing) {
+                    ray_mask.unset(i);
                 }
             }
         }
@@ -564,6 +568,7 @@ const BATCH_SIZE = 64;
 const Sample = struct {
     ray: Ray,
     hit: Hit,
+    grid_it: Grid.Iterator,
     color: Vec3,
 };
 
@@ -584,6 +589,7 @@ const Scene = struct {
                 samples[y*camera.w+x] = .{
                     .ray = camera.getRandomRay(@intCast(x), @intCast(y)),
                     .color = undefined,
+                    .grid_it = undefined,
                     .hit = undefined,
                 };
             }
