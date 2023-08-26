@@ -54,40 +54,62 @@ pub fn Vec(comptime size: usize, comptime T: type) type {
             return .{ .data = self.data * @as(Data, @splat(s)) };
         }
 
-        pub usingnamespace if (T == f32 and size == 3) struct {
-            pub fn toRGB(self: Self) zigimg.color.Rgb24 {
-                const rgb = self.clamp(0.0, 0.999999).scale(256);
-                return .{
-                    .r = @intFromFloat(rgb.data[0]),
-                    .g = @intFromFloat(rgb.data[1]),
-                    .b = @intFromFloat(rgb.data[2]),
-                };
-            }
-            pub fn toInt(self: Self, comptime U: type) Vec(size, U) {
-                return .{
-                    .data = .{
-                        @as(U, @intFromFloat(self.data[0])),
-                        @as(U, @intFromFloat(self.data[1])),
-                        @as(U, @intFromFloat(self.data[2])),
+        pub usingnamespace switch (@typeInfo(T)) {
+            .Int => struct {
+                pub fn toFloat(self: Self, comptime U: type) Vec(size, U) {
+                    // TODO: https://github.com/ziglang/zig/issues/16267
+                    return .{
+                        .data = .{
+                            @as(U, @floatFromInt(self.data[0])),
+                            @as(U, @floatFromInt(self.data[1])),
+                            @as(U, @floatFromInt(self.data[2])),
+                        }
+                    };
+                }
+            },
+            .Float => struct {
+                pub fn toInt(self: Self, comptime U: type) Vec(size, U) {
+                    // TODO: https://github.com/ziglang/zig/issues/16267
+                    return .{
+                        .data = .{
+                            @as(U, @intFromFloat(self.data[0])),
+                            @as(U, @intFromFloat(self.data[1])),
+                            @as(U, @intFromFloat(self.data[2])),
+                        }
+                    };
+                }
+                pub fn length(self: Self) T {
+                    return @sqrt(@reduce(.Add, self.data * self.data));
+                }
+
+                pub fn normalize(self: Self) Self {
+                    return self.scale(1.0 / self.length());
+                }
+
+                pub fn abs(self: Self) Self {
+                    return .{.data = @fabs(self.data)};
+                }
+
+                pub usingnamespace if (size == 3) struct {
+                    pub fn toRGB(self: Self) zigimg.color.Rgb24 {
+                        const rgb = self.clamp(0.0, 0.999999).scale(256);
+                        return .{
+                            .r = @intFromFloat(rgb.data[0]),
+                            .g = @intFromFloat(rgb.data[1]),
+                            .b = @intFromFloat(rgb.data[2]),
+                        };
                     }
-                };
-            }
-            pub fn length(self: Self) T {
-                return @sqrt(@reduce(.Add, self.data * self.data));
-            }
-
-            pub fn normalize(self: Self) Self {
-                return self.scale(1.0 / self.length());
-            }
-        } else struct {};
-
-        pub usingnamespace if (T == bool) struct {
-            pub fn select(self: Self, a: anytype, b: anytype) @TypeOf(a, b) {
-                const Result = @TypeOf(a, b);
-                const Elem = std.meta.Child(std.meta.FieldType(Result, .data));
-                return .{.data = @select(Elem, self.data, a.data, b.data)};
-            }
-        } else struct {};
+                } else struct {};
+            },
+            .Bool => struct {
+                pub fn select(self: Self, a: anytype, b: anytype) @TypeOf(a, b) {
+                    const Result = @TypeOf(a, b);
+                    const Elem = std.meta.Child(std.meta.FieldType(Result, .data));
+                    return .{.data = @select(Elem, self.data, a.data, b.data)};
+                }
+            },
+            else => struct {}
+        };
 
         pub usingnamespace if (size == 3) struct {
             pub fn cross(a: Self, b: Self) Self {
@@ -303,11 +325,184 @@ pub const Grid = struct {
     resolution: Vec3u,
     cell_size: Vec3,
 
+    pub fn init(bbox: Bbox, resolution: [3]u32) Grid {
+        return .{
+            .bbox = bbox,
+            .resolution = Vec3u.fromArray(resolution),
+            .cell_size = Vec3.div(bbox.size(), vec3(
+                @floatFromInt(resolution[0]),
+                @floatFromInt(resolution[1]),
+                @floatFromInt(resolution[2]))),
+        };
+    }
+
     pub fn getCellPos(grid: Grid, point: Vec3) Vec3u {
         const pos = point.subtract(grid.bbox.min).div(grid.cell_size).toInt(u32);
         return Vec3u.min(pos, grid.resolution.dec());
     }
+
+    pub fn traceRay(grid: Grid, ray: Ray) ?Iterator {
+        var t_hit: f32 = undefined;
+        if (grid.bbox.rayIntersection(ray, &t_hit) == false) {
+            return null;
+        }
+        t_hit = @max(0, t_hit);
+
+        const sign = ray.dir.lessThan(Vec3.zeroes());
+        const step = sign.select(Vec3u.fromScalar(std.math.maxInt(u32)), Vec3u.fromScalar(1));
+        const exit = sign.select(Vec3u.fromScalar(0), grid.resolution.dec());
+
+        const t_delta = grid.cell_size.div(ray.dir).abs();
+
+        const hit_local_pos = ray.at(t_hit).subtract(grid.bbox.min);
+        const cell = Vec3u.min(hit_local_pos.div(grid.cell_size).toInt(u32), grid.resolution.dec());
+        const next_cell = cell.add(sign.select(Vec3u.fromScalar(0), Vec3u.fromScalar(1))).toFloat(f32);
+        const t_next_crossing = Vec3.fromScalar(t_hit).add(next_cell.mul(grid.cell_size).subtract(hit_local_pos).div(ray.dir));
+
+        var it: Iterator = .{
+            .cell = cell.data,
+            .exit = exit.data,
+            .step = step.data,
+            .t_delta = t_delta.data,
+            .t_next_crossing = t_next_crossing.data,
+        };
+        return it;
+    }
+
+    const Iterator = struct {
+        cell: [3]u32,
+        exit: [3]u32,
+        step: [3]u32,
+        t_delta: [3]f32,
+        t_next_crossing: [3]f32,
+
+        fn next(self: *Iterator) f32 {
+            const k: u3 =
+                (@as(u3, @intCast(@intFromBool(self.t_next_crossing[0] < self.t_next_crossing[1]))) << 2) +
+                (@as(u3, @intCast(@intFromBool(self.t_next_crossing[0] < self.t_next_crossing[2]))) << 1) +
+                (@as(u3, @intCast(@intFromBool(self.t_next_crossing[1] < self.t_next_crossing[2]))));
+            const map = [8]u2{ 2, 1, 2, 1, 2, 2, 0, 0 };
+            const axis = map[k];
+
+            if (self.cell[axis] == self.exit[axis]) {
+                return std.math.inf(f32);
+            }
+
+            const t_next_crossing = self.t_next_crossing[axis];
+
+            self.cell[axis] = @addWithOverflow(self.cell[axis], self.step[axis])[0];
+            self.t_next_crossing[axis] += self.t_delta[axis];
+
+            return t_next_crossing;
+        }
+    };
 };
+
+test "decrement via add" {
+    var x: u32 = 5;
+    x = @addWithOverflow(x, std.math.maxInt(u32))[0];
+    try std.testing.expectEqual(x, 4);
+}
+
+test "grid traceRay 1" {
+    const grid = Grid.init(.{
+        .min = vec3(0,0,0),
+        .max = vec3(5,5,5),
+    }, .{5,5,5});
+    const ray = .{
+        .orig = vec3(0.5, 0.5, 0.5),
+        .dir = vec3(2, 1, 0).normalize(),
+    };
+    var it = grid.traceRay(ray).?;
+    try std.testing.expectEqual(it.cell, .{0, 0, 0});
+    try std.testing.expectApproxEqAbs(it.next(), 0.559017002, 0.0001);
+    try std.testing.expectEqual(it.cell, .{1, 0, 0});
+    try std.testing.expectApproxEqAbs(it.next(), 1.11803400, 0.0001);
+    try std.testing.expectEqual(it.cell, .{1, 1, 0});
+    try std.testing.expectApproxEqAbs(it.next(), 1.67705106, 0.0001);
+    try std.testing.expectEqual(it.cell, .{2, 1, 0});
+    try std.testing.expectApproxEqAbs(it.next(), 2.79508495, 0.0001);
+    try std.testing.expectEqual(it.cell, .{3, 1, 0});
+    try std.testing.expectApproxEqAbs(it.next(), 3.35410213, 0.0001);
+    try std.testing.expectEqual(it.cell, .{3, 2, 0});
+    try std.testing.expectApproxEqAbs(it.next(), 3.91311883, 0.0001);
+    try std.testing.expectEqual(it.cell, .{4, 2, 0});
+    try std.testing.expectEqual(it.next(), std.math.inf(f32));
+}
+
+test "grid traceRay 2" {
+    const grid = Grid.init(.{
+        .min = vec3(0,0,0),
+        .max = vec3(5,5,5),
+    }, .{5,5,5});
+    const ray = .{
+        .orig = vec3(0.5, 10.0, 0.5),
+        .dir = vec3(0,-1,0),
+    };
+    var it = grid.traceRay(ray).?;
+    try std.testing.expectEqual(it.cell, .{0, 4, 0});
+    try std.testing.expectApproxEqAbs(it.next(), 6, 0.0001);
+    try std.testing.expectEqual(it.cell, .{0, 3, 0});
+    try std.testing.expectApproxEqAbs(it.next(), 7, 0.0001);
+    try std.testing.expectEqual(it.cell, .{0, 2, 0});
+    try std.testing.expectApproxEqAbs(it.next(), 8, 0.0001);
+    try std.testing.expectEqual(it.cell, .{0, 1, 0});
+    try std.testing.expectApproxEqAbs(it.next(), 9, 0.0001);
+    try std.testing.expectEqual(it.cell, .{0, 0, 0});
+    try std.testing.expectEqual(it.next(), std.math.inf(f32));
+}
+
+test "grid traceRay 3" {
+    const grid = Grid.init(.{
+        .min = vec3(0,0,0),
+        .max = vec3(5,5,5),
+    }, .{5,5,5});
+    const ray = .{
+        .orig = vec3(0.5, -5.0, 0.5),
+        .dir = vec3(0,1,0),
+    };
+    var it = grid.traceRay(ray).?;
+    try std.testing.expectEqual(it.cell, .{0, 0, 0});
+    try std.testing.expectApproxEqAbs(it.next(), 6, 0.0001);
+    try std.testing.expectEqual(it.cell, .{0, 1, 0});
+    try std.testing.expectApproxEqAbs(it.next(), 7, 0.0001);
+    try std.testing.expectEqual(it.cell, .{0, 2, 0});
+    try std.testing.expectApproxEqAbs(it.next(), 8, 0.0001);
+    try std.testing.expectEqual(it.cell, .{0, 3, 0});
+    try std.testing.expectApproxEqAbs(it.next(), 9, 0.0001);
+    try std.testing.expectEqual(it.cell, .{0, 4, 0});
+    try std.testing.expectEqual(it.next(), std.math.inf(f32));
+}
+
+test "grid traceRay 4" {
+    const grid = Grid.init(.{
+        .min = vec3(0,0,0),
+        .max = vec3(5,5,5),
+    }, .{5,5,5});
+    const ray = .{
+        .orig = vec3(0.5, 0.5, 0.5),
+        .dir = vec3(1, 1, 0).normalize(),
+    };
+    var it = grid.traceRay(ray).?;
+    try std.testing.expectEqual(it.cell, .{0, 0, 0});
+    try std.testing.expectApproxEqAbs(it.next(), 0.707106769, 0.0001);
+    try std.testing.expectEqual(it.cell, .{0, 1, 0});
+    try std.testing.expectApproxEqAbs(it.next(), 0.707106769, 0.0001);
+    try std.testing.expectEqual(it.cell, .{1, 1, 0});
+    try std.testing.expectApproxEqAbs(it.next(), 2.12132024, 0.0001);
+    try std.testing.expectEqual(it.cell, .{1, 2, 0});
+    try std.testing.expectApproxEqAbs(it.next(), 2.12132024, 0.0001);
+    try std.testing.expectEqual(it.cell, .{2, 2, 0});
+    try std.testing.expectApproxEqAbs(it.next(), 3.53553390, 0.0001);
+    try std.testing.expectEqual(it.cell, .{2, 3, 0});
+    try std.testing.expectApproxEqAbs(it.next(), 3.53553390, 0.0001);
+    try std.testing.expectEqual(it.cell, .{3, 3, 0});
+    try std.testing.expectApproxEqAbs(it.next(), 4.94974756, 0.0001);
+    try std.testing.expectEqual(it.cell, .{3, 4, 0});
+    try std.testing.expectApproxEqAbs(it.next(), 4.94974756, 0.0001);
+    try std.testing.expectEqual(it.cell, .{4, 4, 0});
+    try std.testing.expectEqual(it.next(), std.math.inf(f32));
+}
 
 pub const Triangle = struct {
     v0: Vec3,

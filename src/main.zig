@@ -454,11 +454,7 @@ const World = struct {
 
         const cells = try arena_allocator.alloc(Cell, resolution[0] * resolution[1] * resolution[2]);
 
-        const grid = Grid{
-            .bbox = bbox,
-            .resolution = Vec3u.fromArray(resolution),
-            .cell_size = Vec3.div(bbox.size(), vec3(resolution[0], resolution[1], resolution[2])),
-        };
+        const grid = Grid.init(bbox, resolution);
 
         const total_triangles_count = try initCells(gltf, cells, grid);
         std.log.info("Total triangle count: {}", .{total_triangles_count});
