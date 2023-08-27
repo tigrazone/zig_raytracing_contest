@@ -601,8 +601,8 @@ const Scene = struct {
     }
 
     fn renderWorker(self: Scene, thread_idx: usize, thread_num: usize) void {
-        const max_bounce = 20;
-        const num_samples = 10;
+        const max_bounce = 10;
+        const num_samples = 20;
         const inv_num_samples = Vec3.ones().div(Vec3.fromScalar(num_samples));
 
         var prng = std.rand.DefaultPrng.init(thread_idx);
