@@ -199,14 +199,12 @@ const Camera = struct {
         };
     }
 
-    fn getRandomRay(self: Camera, x: u16, y: u16) Ray {
-        const f_x: f32 = @floatFromInt(x); // TODO: add rand
-        const f_y: f32 = @floatFromInt(y); // TODO: add rand
+    fn getRay(self: Camera, x: f32, y: f32) Ray {
         return .{
             .orig = self.origin,
             .dir = self.lower_left_corner
-                .add(self.right.scale(f_x))
-                .add(self.up.scale(f_y))
+                .add(self.right.scale(x))
+                .add(self.up.scale(y))
                 .normalize()
         };
     }
@@ -318,7 +316,8 @@ const World = struct {
 
     grid: Grid,
     cells: []Cell,
-    triangles: std.MultiArrayList(Triangle),
+    triangles_pos: []Triangle.Pos,
+    triangles_data: []Triangle.Data,
     materials: []Material,
 
     fn calcBbox(gltf: Gltf, bbox: *Bbox) !usize {
@@ -492,7 +491,8 @@ const World = struct {
         return .{
             .grid = grid,
             .cells = cells,
-            .triangles = triangles,
+            .triangles_pos = triangles.items(.pos),
+            .triangles_data = triangles.items(.data),
             .materials = materials,
         };
     }
@@ -505,8 +505,7 @@ const World = struct {
         );
     }
 
-    fn render(world: World, ray: Ray) Vec3 {
-        const triangle_pos = world.triangles.items(.pos);
+    fn traceRay(world: World, ray: Ray, ignore_triangle: usize) Hit {
         var nearest_hit = Hit{
             .t = std.math.inf(f32),
             .u = undefined,
@@ -522,7 +521,7 @@ const World = struct {
                 const end = begin + cell.num_triangles;
                 for (begin..end) |triangle_idx|
                 {
-                    const triangle = triangle_pos[triangle_idx];
+                    const triangle = world.triangles_pos[triangle_idx];
                     var hit = Hit{
                         .t = undefined,
                         .u = undefined,
@@ -530,7 +529,7 @@ const World = struct {
                         .triangle_idx = triangle_idx
                     };
                     if (triangle.rayIntersection(ray, &hit.t, &hit.u, &hit.v)) {
-                        if (nearest_hit.t > hit.t and hit.t > 0) {
+                        if (nearest_hit.t > hit.t and hit.t > 0 and triangle_idx != ignore_triangle) {
                             nearest_hit = hit;
                         }
                     }
@@ -541,15 +540,32 @@ const World = struct {
                 }
             }
         }
-        const triangle_data = world.triangles.items(.data);
-        if (nearest_hit.t < std.math.inf(f32)) {
-            const triangle = triangle_data[nearest_hit.triangle_idx];
-            const texcoord = triangle.interpolate("texcoord", nearest_hit.u, nearest_hit.v);
-            return world.materials[triangle.material_idx].getColor(texcoord[0], texcoord[1]);
+        return nearest_hit;
+    }
+
+    fn traceRayRecursive(world: World, ray: Ray, depth: u16, ignore_triangle: usize) Vec3 {
+        if (depth == 0) {
+            return Vec3.zeroes();
         }
-        else {
+
+        const hit = world.traceRay(ray, ignore_triangle);
+
+        if (hit.t == std.math.inf(f32)) {
             return getEnvColor(ray);
         }
+
+        const triangle = world.triangles_data[hit.triangle_idx];
+        const material = world.materials[triangle.material_idx];
+
+        const texcoord = triangle.interpolate("texcoord", hit.u, hit.v);
+        const albedo = material.getColor(texcoord[0], texcoord[1]);
+        const normal = triangle.interpolate("normal", hit.u, hit.v);
+        const scattered_dir = normal.add(Vec3.randomUnitVector()).normalize();
+        const new_ray = .{
+            .orig = ray.at(hit.t),
+            .dir = scattered_dir,
+        };
+        return albedo.mul(world.traceRayRecursive(new_ray, depth-1, hit.triangle_idx));
     }
 };
 
@@ -557,7 +573,6 @@ const Scene = struct {
     camera: Camera,
     world: World,
     pixels: []Vec3,
-    do_not_delete_me: []Vec3,
 
     fn load(gltf: Gltf, args: CmdlineArgs, arena_allocator: std.mem.Allocator) !Scene {
         const camera = try Camera.init(gltf, args.width, args.height);
@@ -570,21 +585,32 @@ const Scene = struct {
             .camera = camera,
             .world = world,
             .pixels = pixels,
-            .do_not_delete_me = undefined,
         };
     }
 
     fn renderWorker(self: Scene, thread_idx: usize, thread_num: usize) void {
+        const max_bounce = 100;
+        const num_samples = 5;
+        const inv_num_samples = Vec3.ones().div(Vec3.fromScalar(num_samples));
+
+        var prng = std.rand.DefaultPrng.init(thread_idx);
+        const random = prng.random();
+
         const pixels_per_thread = (self.pixels.len + thread_num - 1) / thread_num;
         var i = pixels_per_thread * thread_idx;
         for (0..pixels_per_thread) |_| {
             if (i >= self.pixels.len) {
                 break;
             }
-            const x = @mod(i, self.camera.w);
-            const y = i / self.camera.w;
-            const ray = self.camera.getRandomRay(@intCast(x), @intCast(y));
-            self.pixels[i] = self.world.render(ray);
+            const x: f32 = @floatFromInt(@mod(i, self.camera.w));
+            const y: f32 = @floatFromInt(i / self.camera.w);
+            var pixel = Vec3.zeroes();
+            for (0..num_samples) |_| {
+                const ray = self.camera.getRay(x + random.float(f32), y + random.float(f32));
+                const ray_color = self.world.traceRayRecursive(ray, max_bounce, std.math.maxInt(usize));
+                pixel = pixel.add(ray_color);
+            }
+            self.pixels[i] = pixel.mul(inv_num_samples);
             i += 1;
         }
     }

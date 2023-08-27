@@ -90,6 +90,19 @@ pub fn Vec(comptime size: usize, comptime T: type) type {
                     return .{.data = @fabs(self.data)};
                 }
 
+                threadlocal var prng = std.rand.DefaultPrng.init(0);
+
+                pub fn randomUnitVector() Self {
+                    // Using Gaussian distribution for all three coordinates of the vector
+                    // will ensure an uniform distribution on the surface of the sphere.
+                    const random = prng.random();
+                    return init(
+                        random.floatNorm(T),
+                        random.floatNorm(T),
+                        random.floatNorm(T),
+                    ).normalize();
+                }
+
                 pub usingnamespace if (size == 3) struct {
                     pub fn toRGB(self: Self) zigimg.color.Rgb24 {
                         const rgb = self.clamp(0.0, 0.999999).scale(256);
@@ -158,6 +171,7 @@ pub fn Vec(comptime size: usize, comptime T: type) type {
         }
     };
 }
+
 
 pub const Vec3 = Vec(3, f32);
 pub const Vec3u = Vec(3, u32);
