@@ -260,22 +260,33 @@ const Texture = struct {
     h: f32,
     w_int: usize,
 
-    fn init(allocator: std.mem.Allocator, gltf: Gltf, texture_idx: Gltf.Index, _factor: [4]f32) !Texture {
-        const texture = gltf.data.textures.items[texture_idx];
-        const image = gltf.data.images.items[texture.source.?];
-        const im: *const zigimg.Image = @alignCast(@ptrCast(image.data.?));
-        const data = try allocator.alloc(Vec3, im.width*im.height);
-        var iter = im.iterator();
+    fn initColor(allocator: std.mem.Allocator, gltf: Gltf, texture_info: ?Gltf.TextureInfo, _factor: []const f32) !Texture {
         const factor = vec3(_factor[0], _factor[1], _factor[2]);
-        while (iter.next()) |pixel| {
-            data[iter.current_index-1] = vec3(pixel.r, pixel.g, pixel.b).mul(factor);
+        if (texture_info) |info| {
+            const texture = gltf.data.textures.items[info.index];
+            const image = gltf.data.images.items[texture.source.?];
+            const im: *const zigimg.Image = @alignCast(@ptrCast(image.data.?));
+            const data = try allocator.alloc(Vec3, im.width*im.height);
+            var iter = im.iterator();
+            while (iter.next()) |pixel| {
+                data[iter.current_index-1] = vec3(pixel.r, pixel.g, pixel.b).mul(factor);
+            }
+            return .{
+                .data = data,
+                .w = @floatFromInt(im.width),
+                .h = @floatFromInt(im.height),
+                .w_int = im.width,
+            };
+        } else {
+            const data = try allocator.alloc(Vec3, 1);
+            data[0] = factor;
+            return .{
+                .data = data,
+                .w = 1,
+                .h = 1,
+                .w_int = 1,
+            };
         }
-        return .{
-            .data = data,
-            .w = @floatFromInt(im.width),
-            .h = @floatFromInt(im.height),
-            .w_int = im.width,
-        };
     }
 
     fn frac(v: f32) f32 {
@@ -293,18 +304,18 @@ const Texture = struct {
 
 const Material = struct {
     base_color: Texture,
+    emissive: Texture,
 
     fn init(allocator: std.mem.Allocator, gltf: Gltf, material_idx: Gltf.Index) !Material {
         const material = gltf.data.materials.items[material_idx];
         return .{
-            .base_color = try Texture.init(allocator, gltf,
-                material.metallic_roughness.base_color_texture.?.index,
-                material.metallic_roughness.base_color_factor),
+            .base_color = try Texture.initColor(allocator, gltf,
+                material.metallic_roughness.base_color_texture,
+                &material.metallic_roughness.base_color_factor),
+            .emissive = try Texture.initColor(allocator, gltf,
+                material.emissive_texture,
+                &material.emissive_factor), // TODO: material.emissive_strength
         };
-    }
-
-    fn getColor(self: Material, u: f32, v: f32) Vec3 {
-        return self.base_color.sample(u, v);
     }
 };
 
@@ -557,15 +568,16 @@ const World = struct {
         const triangle = world.triangles_data[hit.triangle_idx];
         const material = world.materials[triangle.material_idx];
 
-        const texcoord = triangle.interpolate("texcoord", hit.u, hit.v);
-        const albedo = material.getColor(texcoord[0], texcoord[1]);
+        const texcoord = triangle.interpolate("texcoord", hit.u, hit.v); // TODO: get texcoord channel from Texture
+        const albedo = material.base_color.sample(texcoord[0], texcoord[1]);
+        const emissive = material.emissive.sample(texcoord[0], texcoord[1]);
         const normal = triangle.interpolate("normal", hit.u, hit.v);
         const scattered_dir = normal.add(Vec3.randomUnitVector()).normalize();
         const new_ray = .{
             .orig = ray.at(hit.t),
             .dir = scattered_dir,
         };
-        return albedo.mul(world.traceRayRecursive(new_ray, depth-1, hit.triangle_idx));
+        return emissive.add(albedo.mul(world.traceRayRecursive(new_ray, depth-1, hit.triangle_idx)));
     }
 };
 
@@ -589,8 +601,8 @@ const Scene = struct {
     }
 
     fn renderWorker(self: Scene, thread_idx: usize, thread_num: usize) void {
-        const max_bounce = 100;
-        const num_samples = 5;
+        const max_bounce = 20;
+        const num_samples = 10;
         const inv_num_samples = Vec3.ones().div(Vec3.fromScalar(num_samples));
 
         var prng = std.rand.DefaultPrng.init(thread_idx);

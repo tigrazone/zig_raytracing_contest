@@ -9,7 +9,8 @@
             "name" : "Scene",
             "nodes" : [
                 0,
-                1
+                1,
+                2
             ]
         }
     ],
@@ -36,6 +37,26 @@
                 7.075623035430908,
                 1.1591644287109375,
                 -0.2108437418937683
+            ]
+        },
+        {
+            "mesh" : 1,
+            "name" : "Plane",
+            "rotation" : [
+                -1,
+                0,
+                0,
+                1.6292068494294654e-07
+            ],
+            "scale" : [
+                5.97962760925293,
+                1,
+                1
+            ],
+            "translation" : [
+                -0.7733652591705322,
+                4.012947082519531,
+                -0.40151071548461914
             ]
         }
     ],
@@ -555,6 +576,23 @@
                     "index" : 72
                 }
             }
+        },
+        {
+            "doubleSided" : true,
+            "emissiveFactor" : [
+                1,
+                1,
+                1
+            ],
+            "name" : "Material.001",
+            "pbrMetallicRoughness" : {
+                "baseColorFactor" : [
+                    0,
+                    0,
+                    0,
+                    1
+                ]
+            }
         }
     ],
     "meshes" : [
@@ -785,6 +823,20 @@
                     },
                     "indices" : 98,
                     "material" : 24
+                }
+            ]
+        },
+        {
+            "name" : "Plane",
+            "primitives" : [
+                {
+                    "attributes" : {
+                        "POSITION" : 99,
+                        "TEXCOORD_0" : 100,
+                        "NORMAL" : 101
+                    },
+                    "indices" : 102,
+                    "material" : 25
                 }
             ]
         }
@@ -2274,6 +2326,40 @@
             "componentType" : 5123,
             "count" : 43452,
             "type" : "SCALAR"
+        },
+        {
+            "bufferView" : 99,
+            "componentType" : 5126,
+            "count" : 4,
+            "max" : [
+                1,
+                0,
+                1
+            ],
+            "min" : [
+                -1,
+                0,
+                -1
+            ],
+            "type" : "VEC3"
+        },
+        {
+            "bufferView" : 100,
+            "componentType" : 5126,
+            "count" : 4,
+            "type" : "VEC2"
+        },
+        {
+            "bufferView" : 101,
+            "componentType" : 5126,
+            "count" : 4,
+            "type" : "VEC3"
+        },
+        {
+            "bufferView" : 102,
+            "componentType" : 5123,
+            "count" : 6,
+            "type" : "SCALAR"
         }
     ],
     "bufferViews" : [
@@ -2870,6 +2956,30 @@
             "byteLength" : 86904,
             "byteOffset" : 8275020,
             "target" : 34963
+        },
+        {
+            "buffer" : 0,
+            "byteLength" : 48,
+            "byteOffset" : 8361924,
+            "target" : 34962
+        },
+        {
+            "buffer" : 0,
+            "byteLength" : 32,
+            "byteOffset" : 8361972,
+            "target" : 34962
+        },
+        {
+            "buffer" : 0,
+            "byteLength" : 48,
+            "byteOffset" : 8362004,
+            "target" : 34962
+        },
+        {
+            "buffer" : 0,
+            "byteLength" : 12,
+            "byteOffset" : 8362052,
+            "target" : 34963
         }
     ],
     "samplers" : [
@@ -2880,7 +2990,7 @@
     ],
     "buffers" : [
         {
-            "byteLength" : 8361924,
+            "byteLength" : 8362064,
             "uri" : "Sponza.bin"
         }
     ]
