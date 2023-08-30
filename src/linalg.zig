@@ -78,6 +78,27 @@ pub fn Vec(comptime size: usize, comptime T: type) type {
                         }
                     };
                 }
+
+                pub fn posInf() Self {
+                    return .{
+                        .data = .{
+                            std.math.inf(T),
+                            std.math.inf(T),
+                            std.math.inf(T),
+                        }
+                    };
+                }
+
+                pub fn negInf() Self {
+                    return .{
+                        .data = .{
+                            -std.math.inf(T),
+                            -std.math.inf(T),
+                            -std.math.inf(T),
+                        }
+                    };
+                }
+
                 pub fn length(self: Self) T {
                     return @sqrt(@reduce(.Add, self.data * self.data));
                 }
@@ -243,8 +264,8 @@ const subtract = Vec3.subtract;
 const add = Vec3.add;
 
 pub const Bbox = struct {
-    min: Vec3 = Vec3.zeroes(),
-    max: Vec3 = Vec3.zeroes(),
+    min: Vec3 = Vec3.posInf(),
+    max: Vec3 = Vec3.negInf(),
 
     pub fn extendBy(self: *Bbox, pos: Vec3) void {
         self.min = Vec3.min(self.min, pos);

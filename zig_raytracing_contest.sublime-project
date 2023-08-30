@@ -18,6 +18,9 @@
 		{
 			"path": "C:\\zig\\lib\\std",
 		},
+		{
+			"path": "C:\\Users\\log0div0\\work\\raytracing_contest_runner"
+		},
 	],
 	"build_systems":
 	[
