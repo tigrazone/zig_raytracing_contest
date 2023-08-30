@@ -111,6 +111,10 @@ pub fn Vec(comptime size: usize, comptime T: type) type {
                     return .{.data = @fabs(self.data)};
                 }
 
+                pub fn ceil(self: Self) Self {
+                    return .{ .data = @ceil(self.data) };
+                }
+
                 threadlocal var prng = std.rand.DefaultPrng.init(0);
 
                 pub fn randomUnitVector() Self {
@@ -270,6 +274,11 @@ pub const Bbox = struct {
     pub fn extendBy(self: *Bbox, pos: Vec3) void {
         self.min = Vec3.min(self.min, pos);
         self.max = Vec3.max(self.max, pos);
+    }
+
+    pub fn unionWith(self: *Bbox, b: Bbox) void {
+        self.min = Vec3.min(self.min, b.min);
+        self.max = Vec3.max(self.max, b.max);
     }
 
     pub fn size(self: Bbox) Vec3 {

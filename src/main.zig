@@ -331,8 +331,11 @@ const World = struct {
     triangles_data: []Triangle.Data,
     materials: []Material,
 
-    fn calcBbox(gltf: Gltf, bbox: *Bbox) !usize {
-        var result: usize = 0;
+    fn initGrid(gltf: Gltf, grid: *Grid) !usize {
+        var unique_triangles: usize = 0;
+        var mean_triangle_size = Vec3.zeroes();
+        var bbox: Bbox = .{};
+
         for (gltf.data.nodes.items) |node| {
             if (node.mesh != null) {
                 const mesh = gltf.data.meshes.items[node.mesh.?];
@@ -340,20 +343,37 @@ const World = struct {
                     const positions = Accessor(Vec3).init(gltf, try findPrimitiveAttribute(primitive, .position));
                     const indices = Accessor(u16).init(gltf, primitive.indices);
 
-                    result += indices.num / 3;
+                    const triangles_count = indices.num / 3;
 
                     const matrix = Mat4{.data = gltf.getGlobalTransform(node)};
 
-                    for (0..indices.num) |index_idx| {
-                        const vertex_idx = indices.at(index_idx);
-                        const pos = matrix.transformPosition(positions.at(vertex_idx));
-                        bbox.extendBy(pos);
+                    for (0..triangles_count) |triangle_idx| {
+                        var triangle_bbox: Bbox = .{};
+                        for (0..3) |i| {
+                            const index_idx = triangle_idx*3+i;
+                            const vertex_idx = indices.at(index_idx);
+                            const pos = matrix.transformPosition(positions.at(vertex_idx));
+                            triangle_bbox.extendBy(pos);
+                        }
+                        mean_triangle_size = Vec3.add(mean_triangle_size, triangle_bbox.size());
+                        bbox.unionWith(triangle_bbox);
                     }
-
+                    unique_triangles += triangles_count;
                 }
             }
         }
-        return result;
+
+        mean_triangle_size = mean_triangle_size.div(Vec3.fromScalar(@floatFromInt(unique_triangles)));
+        const mean_triangle_count = bbox.size().div(mean_triangle_size);
+
+        std.log.info("Mean triangle count: {d:.1}", .{mean_triangle_count.data});
+        const resolution = mean_triangle_count.div(Vec3.fromScalar(4)).ceil().toInt(u32);
+        // const resolution = vec3u(100, 100, 100);
+        std.log.info("Grid resolution: {any}", .{resolution.data});
+
+        grid.* = Grid.init(bbox, resolution);
+
+        return unique_triangles;
     }
 
     fn initCells(gltf: Gltf, cells: []Cell, grid: Grid) !usize {
@@ -407,8 +427,10 @@ const World = struct {
             cell.num_triangles = 0;
         }
         const mean_triangles = total_triangles_count / (grid.numCells() - empty_cells);
-        std.log.info("Empty cells: {}/{} min triangles: {} max triangles: {} mean_triangles: {}",
-            .{empty_cells, grid.numCells(), min_triangles, max_triangles, mean_triangles});
+        std.log.info("Empty cells: {}/{} ({d:.2}%) min triangles: {} max triangles: {} mean_triangles: {}",
+            .{empty_cells, grid.numCells(),
+                @as(f32, @floatFromInt(empty_cells)) / @as(f32, @floatFromInt(grid.numCells())) * 100,
+                min_triangles, max_triangles, mean_triangles});
         return total_triangles_count;
     }
 
@@ -468,26 +490,11 @@ const World = struct {
     }
 
     fn init(gltf: Gltf, arena_allocator: std.mem.Allocator) !World {
-        var bbox: Bbox = .{};
-        const unique_triangles = try calcBbox(gltf, &bbox);
-        std.log.info("Unique triangle count: {}", .{unique_triangles});
+        var grid: Grid = undefined;
+        const unique_triangles = try initGrid(gltf, &grid);
 
-        // const triangles_density = @as(f32, @floatFromInt(unique_triangles)) / bbox.size().reduceMul();
-        // const recommended_resolution = bbox.size()
-        //     .mul(Vec3.fromScalar(std.math.pow(f32, triangles_density, 1.0 / 3.0)))
-        //     .toInt(u32)
-        //     .clamp(1, 128);
-        // std.log.info("Grid recommended resolution: {any}", .{recommended_resolution});
-
-        const resolution = vec3u(100, 100, 100);
-        std.log.info("Grid resolution: {any}", .{resolution.data});
-
-        const cells = try arena_allocator.alloc(Cell, resolution.reduceMul());
-
-        const grid = Grid.init(bbox, resolution);
-
+        const cells = try arena_allocator.alloc(Cell, grid.resolution.reduceMul());
         const total_triangles_count = try initCells(gltf, cells, grid);
-        std.log.info("Total triangle count: {}", .{total_triangles_count});
 
         var triangles = std.MultiArrayList(Triangle){};
         try triangles.resize(arena_allocator, total_triangles_count);
@@ -497,6 +504,10 @@ const World = struct {
         for (materials, 0..) |*material, i| {
             material.* = try Material.init(arena_allocator, gltf, i);
         }
+
+        std.log.info("Unique triangle count: {}/{} ({d:.2}%)",
+            .{unique_triangles, total_triangles_count,
+                @as(f32, @floatFromInt(unique_triangles)) / @as(f32, @floatFromInt(total_triangles_count)) * 100});
         std.log.info("Materials count: {}", .{materials.len});
 
         return .{
@@ -601,8 +612,8 @@ const Scene = struct {
     }
 
     fn renderWorker(self: Scene, thread_idx: usize, thread_num: usize) void {
-        const max_bounce = 10;
-        const num_samples = 20;
+        const max_bounce = 3;
+        const num_samples = 4;
         const inv_num_samples = Vec3.ones().div(Vec3.fromScalar(num_samples));
 
         var prng = std.rand.DefaultPrng.init(thread_idx);
