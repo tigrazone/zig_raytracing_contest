@@ -367,9 +367,8 @@ const World = struct {
         const mean_triangle_count = bbox.size().div(mean_triangle_size);
 
         std.log.info("Mean triangle count: {d:.1}", .{mean_triangle_count.data});
-        const resolution = mean_triangle_count.div(Vec3.fromScalar(4)).ceil().toInt(u32);
-        // const resolution = vec3u(100, 100, 100);
-        std.log.info("Grid resolution: {any}", .{resolution.data});
+        const resolution = config.grid_resolution orelse mean_triangle_count.div(Vec3.fromScalar(4)).ceil().toInt(u32);
+        std.log.info("Grid resolution: {}", .{resolution.data});
 
         grid.* = Grid.init(bbox, resolution);
 
@@ -612,9 +611,7 @@ const Scene = struct {
     }
 
     fn renderWorker(self: Scene, thread_idx: usize, thread_num: usize) void {
-        const max_bounce = 3;
-        const num_samples = 4;
-        const inv_num_samples = Vec3.ones().div(Vec3.fromScalar(num_samples));
+        const inv_num_samples = Vec3.ones().div(Vec3.fromScalar(@floatFromInt(config.num_samples)));
 
         var prng = std.rand.DefaultPrng.init(thread_idx);
         const random = prng.random();
@@ -628,9 +625,9 @@ const Scene = struct {
             const x: f32 = @floatFromInt(@mod(i, self.camera.w));
             const y: f32 = @floatFromInt(i / self.camera.w);
             var pixel = Vec3.zeroes();
-            for (0..num_samples) |_| {
+            for (0..config.num_samples) |_| {
                 const ray = self.camera.getRay(x + random.float(f32), y + random.float(f32));
-                const ray_color = self.world.traceRayRecursive(ray, max_bounce, std.math.maxInt(usize));
+                const ray_color = self.world.traceRayRecursive(ray, config.max_bounce, std.math.maxInt(usize));
                 pixel = pixel.add(ray_color);
             }
             self.pixels[i] = pixel.mul(inv_num_samples);
@@ -777,6 +774,23 @@ const CmdlineArgs = struct {
     height: ?u16 = null,
 };
 
+const Config = struct {
+    grid_resolution: ?Vec3u,
+    num_threads: ?u8,
+    num_samples: u16,
+    max_bounce: u16,
+
+    fn load(path: []const u8, allocator: std.mem.Allocator) !Config {
+        const buf = try loadFile(path, allocator);
+        defer allocator.free(buf);
+        var parsed_str = try std.json.parseFromSlice(Config, allocator, buf, .{});
+        defer parsed_str.deinit();
+        return parsed_str.value;
+    }
+};
+
+var config: Config = undefined;
+
 pub fn main() !void {
     std.log.info("{}", .{std_options.log_level});
 
@@ -789,7 +803,10 @@ pub fn main() !void {
     const args = try zigargs.parseForCurrentProcess(CmdlineArgs, allocator, .print);
     defer args.deinit();
 
-    const num_threads = try std.Thread.getCpuCount();
+    config = try Config.load("config.json", allocator);
+    std.log.info("Num samples: {}, max bounce {}", .{config.num_samples, config.max_bounce});
+
+    const num_threads = config.num_threads orelse try std.Thread.getCpuCount();
     const threads = try allocator.alloc(std.Thread, num_threads);
     defer allocator.free(threads);
     std.log.info("Num threads: {}", .{num_threads});

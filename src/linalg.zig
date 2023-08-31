@@ -194,6 +194,10 @@ pub fn Vec(comptime size: usize, comptime T: type) type {
         pub fn lessThan(a: Self, b: Self) Vec(size, bool) {
             return .{.data = a.data < b.data};
         }
+
+        pub fn jsonParse(allocator: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !Self {
+            return .{.data = try std.json.innerParse(Data, allocator, source, options)};
+        }
     };
 }
 
