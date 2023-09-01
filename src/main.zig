@@ -86,21 +86,19 @@ pub fn main() !void {
     defer allocator.free(threads);
     std.log.info("Num threads: {}", .{num_threads});
 
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-
-    const scene = blk: {
+    var scene = blk: {
         const loading_time = std.time.nanoTimestamp();
         var gltf = try stage1.loadGltfFile(allocator, args.options.in, threads);
         defer gltf.deinit();
         std.log.info("Loaded in {}", .{getDuration(loading_time)});
 
         const preprocessing_time = std.time.nanoTimestamp();
-        const scene = try stage1.loadScene(gltf, args.options, arena.allocator());
+        const scene = try stage1.loadScene(gltf, args.options, allocator);
         std.log.info("Preprocessed in {}", .{getDuration(preprocessing_time)});
 
         break :blk scene;
     };
+    defer scene.deinit();
 
     const render_time = std.time.nanoTimestamp();
     try scene.render(threads);

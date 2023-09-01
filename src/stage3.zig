@@ -192,6 +192,7 @@ pub const Scene = struct {
     camera: Camera,
     world: World,
     pixels: []Vec3,
+    arena: std.heap.ArenaAllocator,
 
     fn renderWorker(self: Scene, thread_idx: usize, thread_num: usize) void {
         const inv_num_samples = Vec3.ones().div(Vec3.fromScalar(@floatFromInt(main.config.num_samples)));
@@ -232,5 +233,9 @@ pub const Scene = struct {
     pub fn getPixelColor(self: Scene, x: u16, y: u16) zigimg.color.Rgb24
     {
         return self.pixels[y*self.camera.w+x].toRGB();
+    }
+
+    pub fn deinit(self: *Scene) void {
+        self.arena.deinit();
     }
 };
