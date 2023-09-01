@@ -103,7 +103,7 @@ pub const Material = struct {
     emissive: Texture,
 };
 
-pub const World = struct {
+pub const Scene = struct {
     pub const Cell = struct {
         first_triangle: u32,
         num_triangles: u32,
@@ -114,6 +114,7 @@ pub const World = struct {
     triangles_pos: []Triangle.Pos,
     triangles_data: []Triangle.Data,
     materials: []Material,
+    arena: std.heap.ArenaAllocator,
 
     fn getEnvColor(ray: Ray) Vec3 {
         const t = 0.5*(ray.dir.y()+1.0);
@@ -123,23 +124,23 @@ pub const World = struct {
         );
     }
 
-    fn traceRay(world: World, ray: Ray, ignore_triangle: usize) Hit {
+    fn traceRay(scene: Scene, ray: Ray, ignore_triangle: usize) Hit {
         var nearest_hit = Hit{
             .t = std.math.inf(f32),
             .u = undefined,
             .v = undefined,
             .triangle_idx = undefined,
         };
-        var tmp = world.grid.traceRay(ray);
+        var tmp = scene.grid.traceRay(ray);
         if (tmp) |*grid_it| {
             while (true) {
-                const cell_idx = world.grid.getCellIdx(grid_it.cell[0], grid_it.cell[1], grid_it.cell[2]);
-                const cell = world.cells[cell_idx];
+                const cell_idx = scene.grid.getCellIdx(grid_it.cell[0], grid_it.cell[1], grid_it.cell[2]);
+                const cell = scene.cells[cell_idx];
                 const begin = cell.first_triangle;
                 const end = begin + cell.num_triangles;
                 for (begin..end) |triangle_idx|
                 {
-                    const triangle = world.triangles_pos[triangle_idx];
+                    const triangle = scene.triangles_pos[triangle_idx];
                     var hit = Hit{
                         .t = undefined,
                         .u = undefined,
@@ -161,19 +162,19 @@ pub const World = struct {
         return nearest_hit;
     }
 
-    fn traceRayRecursive(world: World, ray: Ray, depth: u16, ignore_triangle: usize) Vec3 {
+    fn traceRayRecursive(scene: Scene, ray: Ray, depth: u16, ignore_triangle: usize) Vec3 {
         if (depth == 0) {
             return Vec3.zeroes();
         }
 
-        const hit = world.traceRay(ray, ignore_triangle);
+        const hit = scene.traceRay(ray, ignore_triangle);
 
         if (hit.t == std.math.inf(f32)) {
             return getEnvColor(ray);
         }
 
-        const triangle = world.triangles_data[hit.triangle_idx];
-        const material = world.materials[triangle.material_idx];
+        const triangle = scene.triangles_data[hit.triangle_idx];
+        const material = scene.materials[triangle.material_idx];
 
         const texcoord = triangle.interpolate("texcoord", hit.u, hit.v); // TODO: get texcoord channel from Texture
         const albedo = material.base_color.sample(texcoord[0], texcoord[1]);
@@ -184,55 +185,43 @@ pub const World = struct {
             .orig = ray.at(hit.t),
             .dir = scattered_dir,
         };
-        return emissive.add(albedo.mul(world.traceRayRecursive(new_ray, depth-1, hit.triangle_idx)));
+        return emissive.add(albedo.mul(scene.traceRayRecursive(new_ray, depth-1, hit.triangle_idx)));
     }
-};
 
-pub const Scene = struct {
-    camera: Camera,
-    world: World,
-    pixels: []Vec3,
-    arena: std.heap.ArenaAllocator,
-
-    fn renderWorker(self: Scene, thread_idx: usize, thread_num: usize) void {
+    fn renderWorker(self: Scene, thread_idx: usize, thread_num: usize, camera: Camera, img: zigimg.Image) void {
         const inv_num_samples = Vec3.ones().div(Vec3.fromScalar(@floatFromInt(main.config.num_samples)));
 
         var prng = std.rand.DefaultPrng.init(thread_idx);
         const random = prng.random();
 
-        const pixels_per_thread = (self.pixels.len + thread_num - 1) / thread_num;
+        const pixels_per_thread = (img.pixels.rgb24.len + thread_num - 1) / thread_num;
         var i = pixels_per_thread * thread_idx;
         for (0..pixels_per_thread) |_| {
-            if (i >= self.pixels.len) {
+            if (i >= img.pixels.rgb24.len) {
                 break;
             }
-            const x: f32 = @floatFromInt(@mod(i, self.camera.w));
-            const y: f32 = @floatFromInt(i / self.camera.w);
+            const x: f32 = @floatFromInt(@mod(i, camera.w));
+            const y: f32 = @floatFromInt(i / camera.w);
             var pixel = Vec3.zeroes();
             for (0..main.config.num_samples) |_| {
-                const ray = self.camera.getRay(x + random.float(f32), y + random.float(f32));
-                const ray_color = self.world.traceRayRecursive(ray, main.config.max_bounce, std.math.maxInt(usize));
+                const ray = camera.getRay(x + random.float(f32), y + random.float(f32));
+                const ray_color = self.traceRayRecursive(ray, main.config.max_bounce, std.math.maxInt(usize));
                 pixel = pixel.add(ray_color);
             }
-            self.pixels[i] = pixel.mul(inv_num_samples);
+            img.pixels.rgb24[i] = pixel.mul(inv_num_samples).toRGB();
             i += 1;
         }
     }
 
-    pub fn render(self: Scene, threads: []std.Thread) !void {
+    pub fn render(self: Scene, threads: []std.Thread, camera: Camera, img: zigimg.Image) !void {
         for (threads, 0..) |*thread, i| {
             thread.* = try std.Thread.spawn(.{}, renderWorker, .{
-                self, i, threads.len
+                self, i, threads.len, camera, img
             });
         }
         for (threads) |*thread| {
             thread.join();
         }
-    }
-
-    pub fn getPixelColor(self: Scene, x: u16, y: u16) zigimg.color.Rgb24
-    {
-        return self.pixels[y*self.camera.w+x].toRGB();
     }
 
     pub fn deinit(self: *Scene) void {

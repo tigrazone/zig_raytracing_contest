@@ -192,7 +192,7 @@ fn findCameraNode(gltf: Gltf) !Gltf.Node {
     return error.CameraNodeNotFound; // TODO: implement recursive search / deal with multiple instances of the same camera
 }
 
-fn loadCamera(gltf: Gltf, width: ?u16, height: ?u16) !stage3.Camera {
+pub fn loadCamera(gltf: Gltf, width: ?u16, height: ?u16) !stage3.Camera {
 
     const camera_node = try findCameraNode(gltf);
 
@@ -236,7 +236,7 @@ fn loadCamera(gltf: Gltf, width: ?u16, height: ?u16) !stage3.Camera {
     const fwd = matrix.col3(2).scale(-1).normalize();
     const world_up = vec3(0,1,0);
 
-    const right = cross(world_up, fwd).normalize();
+    const right = cross(fwd, world_up).normalize();
     const up = cross(fwd, right);
 
     const focal_length = (f_h / 2) / @tan(camera.type.perspective.yfov / 2);
@@ -357,7 +357,7 @@ fn initGrid(gltf: Gltf, grid: *Grid) !usize {
     return unique_triangles;
 }
 
-fn initCells(gltf: Gltf, cells: []stage3.World.Cell, grid: Grid) !usize {
+fn initCells(gltf: Gltf, cells: []stage3.Scene.Cell, grid: Grid) !usize {
     @memset(cells, .{.first_triangle = 0, .num_triangles = 0});
     for (gltf.data.nodes.items) |node| {
         if (node.mesh != null) {
@@ -415,7 +415,7 @@ fn initCells(gltf: Gltf, cells: []stage3.World.Cell, grid: Grid) !usize {
     return total_triangles_count;
 }
 
-fn initTriangles(gltf: Gltf, triangles: *std.MultiArrayList(stage3.Triangle), cells: []stage3.World.Cell, grid: Grid) !void {
+fn initTriangles(gltf: Gltf, triangles: *std.MultiArrayList(stage3.Triangle), cells: []stage3.Scene.Cell, grid: Grid) !void {
     for (gltf.data.nodes.items) |node| {
         if (node.mesh != null) {
             const mesh = gltf.data.meshes.items[node.mesh.?];
@@ -470,20 +470,25 @@ fn initTriangles(gltf: Gltf, triangles: *std.MultiArrayList(stage3.Triangle), ce
     }
 }
 
-fn loadWorld(gltf: Gltf, arena_allocator: std.mem.Allocator) !stage3.World {
+pub fn loadScene(gltf: Gltf, child_allocator: std.mem.Allocator) !stage3.Scene {
+    var arena = std.heap.ArenaAllocator.init(child_allocator);
+    errdefer arena.deinit();
+
+    const allocator = arena.allocator();
+
     var grid: Grid = undefined;
     const unique_triangles = try initGrid(gltf, &grid);
 
-    const cells = try arena_allocator.alloc(stage3.World.Cell, grid.resolution.reduceMul());
+    const cells = try allocator.alloc(stage3.Scene.Cell, grid.resolution.reduceMul());
     const total_triangles_count = try initCells(gltf, cells, grid);
 
     var triangles = std.MultiArrayList(stage3.Triangle){};
-    try triangles.resize(arena_allocator, total_triangles_count);
+    try triangles.resize(allocator, total_triangles_count);
     try initTriangles(gltf, &triangles, cells, grid);
 
-    const materials = try arena_allocator.alloc(stage3.Material, gltf.data.materials.items.len);
+    const materials = try allocator.alloc(stage3.Material, gltf.data.materials.items.len);
     for (materials, 0..) |*material, i| {
-        material.* = try loadMaterial(arena_allocator, gltf, i);
+        material.* = try loadMaterial(allocator, gltf, i);
     }
 
     std.log.info("Unique triangle count: {}/{} ({d:.2}%)",
@@ -497,24 +502,6 @@ fn loadWorld(gltf: Gltf, arena_allocator: std.mem.Allocator) !stage3.World {
         .triangles_pos = triangles.items(.pos),
         .triangles_data = triangles.items(.data),
         .materials = materials,
-    };
-}
-
-pub fn loadScene(gltf: Gltf, args: main.CmdlineArgs, child_allocator: std.mem.Allocator) !stage3.Scene {
-    var arena = std.heap.ArenaAllocator.init(child_allocator);
-    errdefer arena.deinit();
-
-    const allocator = arena.allocator();
-
-    const camera = try loadCamera(gltf, args.width, args.height);
-    const world = try loadWorld(gltf, allocator);
-
-    var pixels = try allocator.alloc(Vec3, camera.w * camera.h);
-
-    return .{
-        .camera = camera,
-        .world = world,
-        .pixels = pixels,
         .arena = arena,
     };
 }

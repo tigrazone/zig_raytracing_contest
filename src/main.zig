@@ -86,39 +86,27 @@ pub fn main() !void {
     defer allocator.free(threads);
     std.log.info("Num threads: {}", .{num_threads});
 
-    var scene = blk: {
+    var camera: stage3.Camera = undefined;
+    var scene: stage3.Scene = undefined;
+    {
         const loading_time = std.time.nanoTimestamp();
         var gltf = try stage1.loadGltfFile(allocator, args.options.in, threads);
         defer gltf.deinit();
         std.log.info("Loaded in {}", .{getDuration(loading_time)});
 
         const preprocessing_time = std.time.nanoTimestamp();
-        const scene = try stage1.loadScene(gltf, args.options, allocator);
+        camera = try stage1.loadCamera(gltf, args.options.width, args.options.height);
+        scene = try stage1.loadScene(gltf, allocator);
         std.log.info("Preprocessed in {}", .{getDuration(preprocessing_time)});
-
-        break :blk scene;
-    };
+    }
     defer scene.deinit();
 
-    const render_time = std.time.nanoTimestamp();
-    try scene.render(threads);
-    std.log.info("Rendered in {}", .{getDuration(render_time)});
-
-    const w = scene.camera.w;
-    const h = scene.camera.h;
-
-    var img = try zigimg.Image.create(allocator, w, h, .rgb24);
+    var img = try zigimg.Image.create(allocator, camera.w, camera.h, .rgb24);
     defer img.deinit();
 
-    const resolve_time = std.time.nanoTimestamp();
-    for (0..h) |y| {
-        for (0..w) |x| {
-            const row = h - 1 - y;
-            const column = w - 1 - x;
-            img.pixels.rgb24[row*w+column] = scene.getPixelColor(@intCast(x), @intCast(y));
-        }
-    }
-    std.log.info("Resolved in {}", .{getDuration(resolve_time)});
+    const render_time = std.time.nanoTimestamp();
+    try scene.render(threads, camera, img);
+    std.log.info("Rendered in {}", .{getDuration(render_time)});
 
     const save_time = std.time.nanoTimestamp();
     try img.writeToFilePath(args.options.out, .{.png = .{}});
