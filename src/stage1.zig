@@ -5,6 +5,7 @@ const zigimg = @import("zigimg");
 
 const main = @import("main.zig");
 const linalg = @import("linalg.zig");
+const stage3 = @import("stage3.zig");
 
 const Vec3 = linalg.Vec3;
 const Mat4 = linalg.Mat4;
@@ -113,7 +114,7 @@ fn findCameraNode(gltf: Gltf) !Gltf.Node {
     return error.CameraNodeNotFound; // TODO: implement recursive search / deal with multiple instances of the same camera
 }
 
-fn loadCamera(gltf: Gltf, width: ?u16, height: ?u16) !main.Camera {
+fn loadCamera(gltf: Gltf, width: ?u16, height: ?u16) !stage3.Camera {
 
     const camera_node = try findCameraNode(gltf);
 
@@ -184,7 +185,7 @@ fn loadCamera(gltf: Gltf, width: ?u16, height: ?u16) !main.Camera {
 // =====================================================================================
 // =====================================================================================
 
-fn loadColorTexture(allocator: std.mem.Allocator, gltf: Gltf, texture_info: ?Gltf.TextureInfo, _factor: []const f32) !main.Texture {
+fn loadColorTexture(allocator: std.mem.Allocator, gltf: Gltf, texture_info: ?Gltf.TextureInfo, _factor: []const f32) !stage3.Texture {
     const factor = vec3(_factor[0], _factor[1], _factor[2]);
     if (texture_info) |info| {
         const texture = gltf.data.textures.items[info.index];
@@ -213,7 +214,7 @@ fn loadColorTexture(allocator: std.mem.Allocator, gltf: Gltf, texture_info: ?Glt
     }
 }
 
-fn loadMaterial(allocator: std.mem.Allocator, gltf: Gltf, material_idx: Gltf.Index) !main.Material {
+fn loadMaterial(allocator: std.mem.Allocator, gltf: Gltf, material_idx: Gltf.Index) !stage3.Material {
     const material = gltf.data.materials.items[material_idx];
     return .{
         .base_color = try loadColorTexture(allocator, gltf,
@@ -278,7 +279,7 @@ fn initGrid(gltf: Gltf, grid: *Grid) !usize {
     return unique_triangles;
 }
 
-fn initCells(gltf: Gltf, cells: []main.World.Cell, grid: Grid) !usize {
+fn initCells(gltf: Gltf, cells: []stage3.World.Cell, grid: Grid) !usize {
     @memset(cells, .{.first_triangle = 0, .num_triangles = 0});
     for (gltf.data.nodes.items) |node| {
         if (node.mesh != null) {
@@ -336,7 +337,7 @@ fn initCells(gltf: Gltf, cells: []main.World.Cell, grid: Grid) !usize {
     return total_triangles_count;
 }
 
-fn initTriangles(gltf: Gltf, triangles: *std.MultiArrayList(main.Triangle), cells: []main.World.Cell, grid: Grid) !void {
+fn initTriangles(gltf: Gltf, triangles: *std.MultiArrayList(stage3.Triangle), cells: []stage3.World.Cell, grid: Grid) !void {
     for (gltf.data.nodes.items) |node| {
         if (node.mesh != null) {
             const mesh = gltf.data.meshes.items[node.mesh.?];
@@ -355,7 +356,7 @@ fn initTriangles(gltf: Gltf, triangles: *std.MultiArrayList(main.Triangle), cell
 
                 for (0..triangles_count) |triangle_idx| {
                     var pos: [3]Vec3 = undefined;
-                    var data = main.Triangle.Data {
+                    var data = stage3.Triangle.Data {
                         .v = undefined,
                         .material_idx = primitive.material.?,
                     };
@@ -368,8 +369,8 @@ fn initTriangles(gltf: Gltf, triangles: *std.MultiArrayList(main.Triangle), cell
                             .texcoord = texcoords.at(vertex_idx),
                         };
                     }
-                    const triangle = main.Triangle{
-                        .pos = main.Triangle.Pos.init(pos[0], pos[1], pos[2]),
+                    const triangle = stage3.Triangle{
+                        .pos = stage3.Triangle.Pos.init(pos[0], pos[1], pos[2]),
                         .data = data,
                     };
                     const min = grid.getCellPos(Vec3.min(pos[0], Vec3.min(pos[1], pos[2])));
@@ -391,18 +392,18 @@ fn initTriangles(gltf: Gltf, triangles: *std.MultiArrayList(main.Triangle), cell
     }
 }
 
-fn loadWorld(gltf: Gltf, arena_allocator: std.mem.Allocator) !main.World {
+fn loadWorld(gltf: Gltf, arena_allocator: std.mem.Allocator) !stage3.World {
     var grid: Grid = undefined;
     const unique_triangles = try initGrid(gltf, &grid);
 
-    const cells = try arena_allocator.alloc(main.World.Cell, grid.resolution.reduceMul());
+    const cells = try arena_allocator.alloc(stage3.World.Cell, grid.resolution.reduceMul());
     const total_triangles_count = try initCells(gltf, cells, grid);
 
-    var triangles = std.MultiArrayList(main.Triangle){};
+    var triangles = std.MultiArrayList(stage3.Triangle){};
     try triangles.resize(arena_allocator, total_triangles_count);
     try initTriangles(gltf, &triangles, cells, grid);
 
-    const materials = try arena_allocator.alloc(main.Material, gltf.data.materials.items.len);
+    const materials = try arena_allocator.alloc(stage3.Material, gltf.data.materials.items.len);
     for (materials, 0..) |*material, i| {
         material.* = try loadMaterial(arena_allocator, gltf, i);
     }
@@ -421,7 +422,7 @@ fn loadWorld(gltf: Gltf, arena_allocator: std.mem.Allocator) !main.World {
     };
 }
 
-pub fn loadScene(gltf: Gltf, args: main.CmdlineArgs, arena_allocator: std.mem.Allocator) !main.Scene {
+pub fn loadScene(gltf: Gltf, args: main.CmdlineArgs, arena_allocator: std.mem.Allocator) !stage3.Scene {
     const camera = try loadCamera(gltf, args.width, args.height);
     const world = try loadWorld(gltf, arena_allocator);
 
