@@ -5,6 +5,7 @@ const zigimg = @import("zigimg");
 
 const main = @import("main.zig");
 const linalg = @import("linalg.zig");
+const stage2 = @import("stage2.zig");
 const stage3 = @import("stage3.zig");
 
 const Vec3 = linalg.Vec3;
@@ -175,6 +176,77 @@ fn Accessor(comptime T: type) type {
     };
 }
 
+fn calcTriangles(gltf: Gltf) usize {
+    var num_triangles: usize = 0;
+    for (gltf.data.nodes.items) |node| {
+        if (node.mesh != null) {
+            const mesh = gltf.data.meshes.items[node.mesh.?];
+            for (mesh.primitives.items) |primitive| {
+                const accessor = gltf.data.accessors.items[primitive.indices.?];
+                num_triangles += accessor.count / 3;
+            }
+        }
+    }
+    return num_triangles;
+}
+
+fn loadTriangles(gltf: Gltf, triangles: *std.MultiArrayList(stage2.Triangle)) !void {
+    var counter: usize = 0;
+    for (gltf.data.nodes.items) |node| {
+        if (node.mesh != null) {
+            const mesh = gltf.data.meshes.items[node.mesh.?];
+            for (mesh.primitives.items) |primitive|
+            {
+                std.debug.assert(primitive.mode == .triangles);
+
+                const positions = Accessor(Vec3).init(gltf, try findPrimitiveAttribute(primitive, .position));
+                const normals = Accessor(Vec3).init(gltf, try findPrimitiveAttribute(primitive, .normal));
+                const texcoords = Accessor([2]f32).init(gltf, try findPrimitiveAttribute(primitive, .texcoord));
+                const indices = Accessor(u16).init(gltf, primitive.indices);
+
+                const triangles_count = indices.num / 3;
+
+                const matrix = Mat4{.data = gltf.getGlobalTransform(node)};
+
+                for (0..triangles_count) |triangle_idx| {
+                    var pos: [3]Vec3 = undefined;
+                    var data = stage3.Triangle.Data {
+                        .v = undefined,
+                        .material_idx = primitive.material.?,
+                    };
+                    for (0..3) |i| {
+                        const index_idx = triangle_idx*3+i;
+                        const vertex_idx = indices.at(index_idx);
+                        pos[i] = matrix.transformPosition(positions.at(vertex_idx));
+                        data.v[i] = .{
+                            .normal = matrix.transformDirection(normals.at(vertex_idx)).normalize(), // TODO: use adjusent matrix
+                            .texcoord = texcoords.at(vertex_idx),
+                        };
+                    }
+                    triangles.set(counter, .{
+                        .pos = pos,
+                        .data = data,
+                    });
+                    counter += 1;
+                }
+            }
+        }
+    }
+}
+
+pub fn loadGeometry(gltf: Gltf, geometry: *stage2.Geometry) !void {
+    const allocator = geometry.arena.allocator();
+
+    const num_triangles = calcTriangles(gltf);
+
+    var triangles = std.MultiArrayList(stage2.Triangle){};
+    try triangles.resize(allocator, num_triangles);
+
+    try loadTriangles(gltf, &triangles);
+
+    geometry.triangles = triangles;
+}
+
 
 
 
@@ -304,204 +376,15 @@ fn loadMaterial(allocator: std.mem.Allocator, gltf: Gltf, material_idx: Gltf.Ind
     };
 }
 
-
-
-
-
-// =====================================================================================
-// =====================================================================================
-// =====================================================================================
-// =====================================================================================
-
-fn initGrid(gltf: Gltf, grid: *Grid) !usize {
-    var unique_triangles: usize = 0;
-    var mean_triangle_size = Vec3.zeroes();
-    var bbox: Bbox = .{};
-
-    for (gltf.data.nodes.items) |node| {
-        if (node.mesh != null) {
-            const mesh = gltf.data.meshes.items[node.mesh.?];
-            for (mesh.primitives.items) |primitive| {
-                const positions = Accessor(Vec3).init(gltf, try findPrimitiveAttribute(primitive, .position));
-                const indices = Accessor(u16).init(gltf, primitive.indices);
-
-                const triangles_count = indices.num / 3;
-
-                const matrix = Mat4{.data = gltf.getGlobalTransform(node)};
-
-                for (0..triangles_count) |triangle_idx| {
-                    var triangle_bbox: Bbox = .{};
-                    for (0..3) |i| {
-                        const index_idx = triangle_idx*3+i;
-                        const vertex_idx = indices.at(index_idx);
-                        const pos = matrix.transformPosition(positions.at(vertex_idx));
-                        triangle_bbox.extendBy(pos);
-                    }
-                    mean_triangle_size = Vec3.add(mean_triangle_size, triangle_bbox.size());
-                    bbox.unionWith(triangle_bbox);
-                }
-                unique_triangles += triangles_count;
-            }
-        }
-    }
-
-    mean_triangle_size = mean_triangle_size.div(Vec3.fromScalar(@floatFromInt(unique_triangles)));
-    const mean_triangle_count = bbox.size().div(mean_triangle_size);
-
-    std.log.info("Mean triangle count: {d:.1}", .{mean_triangle_count.data});
-    const resolution = main.config.grid_resolution orelse mean_triangle_count.div(Vec3.fromScalar(4)).ceil().toInt(u32);
-    std.log.info("Grid resolution: {}", .{resolution.data});
-
-    grid.* = Grid.init(bbox, resolution);
-
-    return unique_triangles;
-}
-
-fn initCells(gltf: Gltf, cells: []stage3.Scene.Cell, grid: Grid) !usize {
-    @memset(cells, .{.first_triangle = 0, .num_triangles = 0});
-    for (gltf.data.nodes.items) |node| {
-        if (node.mesh != null) {
-            const mesh = gltf.data.meshes.items[node.mesh.?];
-            for (mesh.primitives.items) |primitive| {
-                const positions = Accessor(Vec3).init(gltf, try findPrimitiveAttribute(primitive, .position));
-                const indices = Accessor(u16).init(gltf, primitive.indices);
-
-                const triangles_count = indices.num / 3;
-
-                const matrix = Mat4{.data = gltf.getGlobalTransform(node)};
-
-                for (0..triangles_count) |triangle_idx| {
-                    var pos: [3]Vec3 = undefined;
-                    for (0..3) |i| {
-                        const index_idx = triangle_idx*3+i;
-                        const vertex_idx = indices.at(index_idx);
-                        pos[i] = matrix.transformPosition(positions.at(vertex_idx));
-                    }
-                    const min = grid.getCellPos(Vec3.min(pos[0], Vec3.min(pos[1], pos[2])));
-                    const max = grid.getCellPos(Vec3.max(pos[0], Vec3.max(pos[1], pos[2])));
-
-                    for (min.z()..max.z()+1) |z| {
-                        for (min.y()..max.y()+1) |y| {
-                            for (min.x()..max.x()+1) |x| {
-                                const index = grid.getCellIdx(x,y,z);
-                                cells[index].num_triangles += 1;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    var min_triangles: u32 = std.math.maxInt(u32);
-    var max_triangles: u32 = 0;
-    var empty_cells: u32 = 0;
-    var total_triangles_count: u32 = 0;
-    for (cells) |*cell| {
-        if (cell.num_triangles != 0) {
-            min_triangles = @min(min_triangles, cell.num_triangles);
-            max_triangles = @max(max_triangles, cell.num_triangles);
-        } else {
-            empty_cells += 1;
-        }
-        cell.first_triangle = total_triangles_count;
-        total_triangles_count += cell.num_triangles;
-        cell.num_triangles = 0;
-    }
-    const mean_triangles = total_triangles_count / (grid.numCells() - empty_cells);
-    std.log.info("Empty cells: {}/{} ({d:.2}%) min triangles: {} max triangles: {} mean_triangles: {}",
-        .{empty_cells, grid.numCells(),
-            @as(f32, @floatFromInt(empty_cells)) / @as(f32, @floatFromInt(grid.numCells())) * 100,
-            min_triangles, max_triangles, mean_triangles});
-    return total_triangles_count;
-}
-
-fn initTriangles(gltf: Gltf, triangles: *std.MultiArrayList(stage3.Triangle), cells: []stage3.Scene.Cell, grid: Grid) !void {
-    for (gltf.data.nodes.items) |node| {
-        if (node.mesh != null) {
-            const mesh = gltf.data.meshes.items[node.mesh.?];
-            for (mesh.primitives.items) |primitive|
-            {
-                std.debug.assert(primitive.mode == .triangles);
-
-                const positions = Accessor(Vec3).init(gltf, try findPrimitiveAttribute(primitive, .position));
-                const normals = Accessor(Vec3).init(gltf, try findPrimitiveAttribute(primitive, .normal));
-                const texcoords = Accessor([2]f32).init(gltf, try findPrimitiveAttribute(primitive, .texcoord));
-                const indices = Accessor(u16).init(gltf, primitive.indices);
-
-                const triangles_count = indices.num / 3;
-
-                const matrix = Mat4{.data = gltf.getGlobalTransform(node)};
-
-                for (0..triangles_count) |triangle_idx| {
-                    var pos: [3]Vec3 = undefined;
-                    var data = stage3.Triangle.Data {
-                        .v = undefined,
-                        .material_idx = primitive.material.?,
-                    };
-                    for (0..3) |i| {
-                        const index_idx = triangle_idx*3+i;
-                        const vertex_idx = indices.at(index_idx);
-                        pos[i] = matrix.transformPosition(positions.at(vertex_idx));
-                        data.v[i] = .{
-                            .normal = matrix.transformDirection(normals.at(vertex_idx)).normalize(), // TODO: use adjusent matrix
-                            .texcoord = texcoords.at(vertex_idx),
-                        };
-                    }
-                    const triangle = stage3.Triangle{
-                        .pos = stage3.Triangle.Pos.init(pos[0], pos[1], pos[2]),
-                        .data = data,
-                    };
-                    const min = grid.getCellPos(Vec3.min(pos[0], Vec3.min(pos[1], pos[2])));
-                    const max = grid.getCellPos(Vec3.max(pos[0], Vec3.max(pos[1], pos[2])));
-
-                    for (min.z()..max.z()+1) |z| {
-                        for (min.y()..max.y()+1) |y| {
-                            for (min.x()..max.x()+1) |x| {
-                                const index = grid.getCellIdx(x,y,z);
-                                var cell = &cells[index];
-                                triangles.set(cell.first_triangle + cell.num_triangles, triangle);
-                                cell.num_triangles += 1;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-pub fn loadScene(gltf: Gltf, child_allocator: std.mem.Allocator) !stage3.Scene {
-    var arena = std.heap.ArenaAllocator.init(child_allocator);
-    errdefer arena.deinit();
-
-    const allocator = arena.allocator();
-
-    var grid: Grid = undefined;
-    const unique_triangles = try initGrid(gltf, &grid);
-
-    const cells = try allocator.alloc(stage3.Scene.Cell, grid.resolution.reduceMul());
-    const total_triangles_count = try initCells(gltf, cells, grid);
-
-    var triangles = std.MultiArrayList(stage3.Triangle){};
-    try triangles.resize(allocator, total_triangles_count);
-    try initTriangles(gltf, &triangles, cells, grid);
+pub fn loadMaterials(gltf: Gltf, scene: *stage3.Scene) !void {
+    const allocator = scene.arena.allocator();
 
     const materials = try allocator.alloc(stage3.Material, gltf.data.materials.items.len);
     for (materials, 0..) |*material, i| {
         material.* = try loadMaterial(allocator, gltf, i);
     }
 
-    std.log.info("Unique triangle count: {}/{} ({d:.2}%)",
-        .{unique_triangles, total_triangles_count,
-            @as(f32, @floatFromInt(unique_triangles)) / @as(f32, @floatFromInt(total_triangles_count)) * 100});
     std.log.info("Materials count: {}", .{materials.len});
 
-    return .{
-        .grid = grid,
-        .cells = cells,
-        .triangles_pos = triangles.items(.pos),
-        .triangles_data = triangles.items(.data),
-        .materials = materials,
-        .arena = arena,
-    };
+    scene.materials = materials;
 }

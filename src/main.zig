@@ -5,6 +5,7 @@ const zigargs = @import("zigargs");
 
 const linalg = @import("linalg.zig");
 const stage1 = @import("stage1.zig");
+const stage2 = @import("stage2.zig");
 const stage3 = @import("stage3.zig");
 
 test {
@@ -87,19 +88,29 @@ pub fn main() !void {
     std.log.info("Num threads: {}", .{num_threads});
 
     var camera: stage3.Camera = undefined;
-    var scene: stage3.Scene = undefined;
-    {
-        const loading_time = std.time.nanoTimestamp();
-        var gltf = try stage1.loadGltfFile(allocator, args.options.in, threads);
-        defer gltf.deinit();
-        std.log.info("Loaded in {}", .{getDuration(loading_time)});
 
-        const preprocessing_time = std.time.nanoTimestamp();
-        camera = try stage1.loadCamera(gltf, args.options.width, args.options.height);
-        scene = try stage1.loadScene(gltf, allocator);
-        std.log.info("Preprocessed in {}", .{getDuration(preprocessing_time)});
-    }
+    var scene = stage3.Scene.init(allocator);
     defer scene.deinit();
+    {
+        var geometry = stage2.Geometry.init(allocator);
+        defer geometry.deinit();
+        {
+            const loading_time = std.time.nanoTimestamp();
+            var gltf = try stage1.loadGltfFile(allocator, args.options.in, threads);
+            defer gltf.deinit();
+            std.log.info("Loaded in {}", .{getDuration(loading_time)});
+
+            const preprocessing_time = std.time.nanoTimestamp();
+            camera = try stage1.loadCamera(gltf, args.options.width, args.options.height);
+            try stage1.loadMaterials(gltf, &scene);
+            try stage1.loadGeometry(gltf, &geometry);
+            std.log.info("Preprocessed in {}", .{getDuration(preprocessing_time)});
+        }
+
+        const compile_time = std.time.nanoTimestamp();
+        try stage2.compileGeometry(geometry, &scene);
+        std.log.info("Compiled in {}", .{getDuration(compile_time)});
+    }
 
     var img = try zigimg.Image.create(allocator, camera.w, camera.h, .rgb24);
     defer img.deinit();

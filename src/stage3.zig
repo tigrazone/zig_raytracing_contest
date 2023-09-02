@@ -224,6 +224,12 @@ pub const Scene = struct {
         }
     }
 
+    pub fn init(allocator: std.mem.Allocator) Scene {
+        var scene: Scene = undefined;
+        scene.arena = std.heap.ArenaAllocator.init(allocator);
+        return scene;
+    }
+
     pub fn deinit(self: *Scene) void {
         self.arena.deinit();
     }
