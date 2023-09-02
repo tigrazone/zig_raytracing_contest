@@ -108,7 +108,8 @@ pub fn main() !void {
         }
 
         const compile_time = std.time.nanoTimestamp();
-        try stage2.compileGeometry(geometry, &scene);
+        try geometry.build();
+        try geometry.bakeInto(&scene);
         std.log.info("Compiled in {}", .{getDuration(compile_time)});
     }
 

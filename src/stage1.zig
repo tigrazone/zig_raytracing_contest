@@ -244,7 +244,7 @@ pub fn loadGeometry(gltf: Gltf, geometry: *stage2.Geometry) !void {
 
     try loadTriangles(gltf, &triangles);
 
-    geometry.triangles = triangles;
+    geometry.triangles = triangles.slice();
 }
 
 

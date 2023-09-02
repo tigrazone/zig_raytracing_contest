@@ -103,12 +103,12 @@ pub const Material = struct {
     emissive: Texture,
 };
 
-pub const Scene = struct {
-    pub const Cell = struct {
-        first_triangle: u32,
-        num_triangles: u32,
-    };
+pub const Cell = struct {
+    begin: u32,
+    end: u32,
+};
 
+pub const Scene = struct {
     grid: Grid,
     cells: []Cell,
     triangles_pos: []Triangle.Pos,
@@ -136,9 +136,7 @@ pub const Scene = struct {
             while (true) {
                 const cell_idx = scene.grid.getCellIdx(grid_it.cell[0], grid_it.cell[1], grid_it.cell[2]);
                 const cell = scene.cells[cell_idx];
-                const begin = cell.first_triangle;
-                const end = begin + cell.num_triangles;
-                for (begin..end) |triangle_idx|
+                for (cell.begin..cell.end) |triangle_idx|
                 {
                     const triangle = scene.triangles_pos[triangle_idx];
                     var hit = Hit{
