@@ -45,11 +45,9 @@ pub const Geometry = struct {
 	    var bbox: Bbox = .{};
 
 	    for (geometry.triangles.items(.pos)) |pos| {
-            var triangle_bbox: Bbox = .{};
             for (0..3) |i| {
-                triangle_bbox.extendBy(pos[i]);
+	            bbox = bbox.extendBy(pos[i]);
             }
-            bbox.unionWith(triangle_bbox);
 	    }
 
 	    const resolution = main.config.grid_resolution;
