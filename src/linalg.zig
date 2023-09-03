@@ -293,6 +293,14 @@ pub const Bbox = struct {
         return subtract(self.max, self.min);
     }
 
+    pub fn center(self: Bbox) Vec3 {
+        return add(self.max, self.min).scale(0.5);
+    }
+
+    pub fn extents(self: Bbox) Vec3 {
+        return subtract(self.max, self.min).scale(0.5);
+    }
+
     pub fn rayIntersection(self: Bbox, ray: Ray, t: *f32) bool
     {
         const sign = ray.dir.lessThan(Vec3.zeroes());
@@ -402,6 +410,16 @@ pub const Grid = struct {
         return z * grid.resolution.x() * grid.resolution.y() + y * grid.resolution.x() + x;
     }
 
+    pub fn getCellBbox(grid: Grid, x: usize, y: usize, z: usize) Bbox {
+        const min = grid.bbox.min.add(grid.cell_size.mul(
+            vec3(@floatFromInt(x), @floatFromInt(y), @floatFromInt(z))));
+        const max = min.add(grid.cell_size);
+        return .{
+            .min = min,
+            .max = max,
+        };
+    }
+
     pub fn traceRay(grid: Grid, ray: Ray) ?Iterator {
         var t_hit: f32 = undefined;
         if (grid.bbox.rayIntersection(ray, &t_hit) == false) {
@@ -459,10 +477,87 @@ pub const Grid = struct {
     };
 };
 
+fn intersectsTriangleAabbSat(v0: Vec3, v1: Vec3, v2: Vec3, extents: Vec3, axis: Vec3) bool
+{
+    const p0 = dot(v0, axis);
+    const p1 = dot(v1, axis);
+    const p2 = dot(v2, axis);
+
+    const r = extents.x() * @fabs(dot(vec3(1, 0, 0), axis)) +
+        extents.y() * @fabs(dot(vec3(0, 1, 0), axis)) +
+        extents.z() * @fabs(dot(vec3(0, 0, 1), axis));
+
+    const maxP = @max(p0, @max(p1, p2));
+    const minP = @min(p0, @min(p1, p2));
+
+    return !(@max(-maxP, minP) > r);
+}
+
+pub fn intersectsTriangleAabb(tri: [3]Vec3, bbox: Bbox) bool {
+    const center = bbox.center();
+    const extents = bbox.extents();
+
+    const a = tri[0].subtract(center);
+    const b = tri[1].subtract(center);
+    const c = tri[2].subtract(center);
+
+    const ab = subtract(b, a).normalize();
+    const bc = subtract(c, b).normalize();
+    const ca = subtract(a, c).normalize();
+
+    //Cross ab, bc, and ca with (1, 0, 0)
+    const a00 = vec3(0.0, -ab.z(), ab.y());
+    const a01 = vec3(0.0, -bc.z(), bc.y());
+    const a02 = vec3(0.0, -ca.z(), ca.y());
+
+    //Cross ab, bc, and ca with (0, 1, 0)
+    const a10 = vec3(ab.z(), 0.0, -ab.x());
+    const a11 = vec3(bc.z(), 0.0, -bc.x());
+    const a12 = vec3(ca.z(), 0.0, -ca.x());
+
+    //Cross ab, bc, and ca with (0, 0, 1)
+    const a20 = vec3(-ab.y(), ab.x(), 0.0);
+    const a21 = vec3(-bc.y(), bc.x(), 0.0);
+    const a22 = vec3(-ca.y(), ca.x(), 0.0);
+
+    if (
+        !intersectsTriangleAabbSat(a, b, c, extents, a00) or
+        !intersectsTriangleAabbSat(a, b, c, extents, a01) or
+        !intersectsTriangleAabbSat(a, b, c, extents, a02) or
+        !intersectsTriangleAabbSat(a, b, c, extents, a10) or
+        !intersectsTriangleAabbSat(a, b, c, extents, a11) or
+        !intersectsTriangleAabbSat(a, b, c, extents, a12) or
+        !intersectsTriangleAabbSat(a, b, c, extents, a20) or
+        !intersectsTriangleAabbSat(a, b, c, extents, a21) or
+        !intersectsTriangleAabbSat(a, b, c, extents, a22) or
+        !intersectsTriangleAabbSat(a, b, c, extents, vec3(1, 0, 0)) or
+        !intersectsTriangleAabbSat(a, b, c, extents, vec3(0, 1, 0)) or
+        !intersectsTriangleAabbSat(a, b, c, extents, vec3(0, 0, 1)) or
+        !intersectsTriangleAabbSat(a, b, c, extents, cross(ab, bc))
+    )
+    {
+        return false;
+    }
+
+    return true;
+}
+
 test "decrement via add" {
     var x: u32 = 5;
     x = @addWithOverflow(x, std.math.maxInt(u32))[0];
     try std.testing.expectEqual(x, 4);
+}
+
+test "grid getCellBbox" {
+    const grid = Grid.init(.{
+        .min = vec3(0,0,0),
+        .max = vec3(5,5,5),
+    }, vec3u(5,5,5));
+    const bbox = grid.getCellBbox(0, 1, 4);
+    try std.testing.expectEqual(bbox, Bbox{
+        .min = vec3(0, 1, 4),
+        .max = vec3(1, 2, 5),
+    });
 }
 
 test "grid traceRay 1" {

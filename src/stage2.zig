@@ -68,8 +68,11 @@ pub const Geometry = struct {
             for (min.z()..max.z()+1) |z| {
                 for (min.y()..max.y()+1) |y| {
                     for (min.x()..max.x()+1) |x| {
-                        const index = grid.linearlizeCellIdx(x,y,z);
-                        cells[index].num_triangles += 1;
+                    	const bbox = grid.getCellBbox(x,y,z);
+                    	if (linalg.intersectsTriangleAabb(pos, bbox)) {
+	                        const index = grid.linearlizeCellIdx(x,y,z);
+	                        cells[index].num_triangles += 1;
+                    	}
                     }
                 }
             }
@@ -108,10 +111,13 @@ pub const Geometry = struct {
             for (min.z()..max.z()+1) |z| {
                 for (min.y()..max.y()+1) |y| {
                     for (min.x()..max.x()+1) |x| {
-                        const cell_index = grid.linearlizeCellIdx(x,y,z);
-                        var cell = &geometry.cells[cell_index];
-                        indices[cell.first_triangle + cell.num_triangles] = triangle_index;
-                        cell.num_triangles += 1;
+                    	const bbox = grid.getCellBbox(x,y,z);
+                    	if (linalg.intersectsTriangleAabb(pos, bbox)) {
+	                        const cell_index = grid.linearlizeCellIdx(x,y,z);
+	                        var cell = &geometry.cells[cell_index];
+	                        indices[cell.first_triangle + cell.num_triangles] = triangle_index;
+	                        cell.num_triangles += 1;
+	                    }
                     }
                 }
             }
