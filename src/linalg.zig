@@ -393,12 +393,12 @@ pub const Grid = struct {
         return grid.resolution.reduceMul();
     }
 
-    pub fn getCellPos(grid: Grid, point: Vec3) Vec3u {
+    pub fn getCellIdx(grid: Grid, point: Vec3) Vec3u {
         const pos = point.subtract(grid.bbox.min).div(grid.cell_size).toInt(u32);
         return Vec3u.min(pos, grid.resolution.dec());
     }
 
-    pub fn getCellIdx(grid: Grid, x: usize, y: usize, z: usize) usize {
+    pub fn linearlizeCellIdx(grid: Grid, x: usize, y: usize, z: usize) usize {
         return z * grid.resolution.x() * grid.resolution.y() + y * grid.resolution.x() + x;
     }
 

@@ -134,7 +134,7 @@ pub const Scene = struct {
         var tmp = scene.grid.traceRay(ray);
         if (tmp) |*grid_it| {
             while (true) {
-                const cell_idx = scene.grid.getCellIdx(grid_it.cell[0], grid_it.cell[1], grid_it.cell[2]);
+                const cell_idx = scene.grid.linearlizeCellIdx(grid_it.cell[0], grid_it.cell[1], grid_it.cell[2]);
                 const cell = scene.cells[cell_idx];
                 for (cell.begin..cell.end) |triangle_idx|
                 {

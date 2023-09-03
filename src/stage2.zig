@@ -62,13 +62,13 @@ pub const Geometry = struct {
 		const cells = try geometry.arena.allocator().alloc(Cell, num_cells);
 	    @memset(cells, .{.first_triangle = 0, .num_triangles = 0});
 	    for (geometry.triangles.items(.pos)) |pos| {
-            const min = grid.getCellPos(Vec3.min(pos[0], Vec3.min(pos[1], pos[2])));
-            const max = grid.getCellPos(Vec3.max(pos[0], Vec3.max(pos[1], pos[2])));
+            const min = grid.getCellIdx(Vec3.min(pos[0], Vec3.min(pos[1], pos[2])));
+            const max = grid.getCellIdx(Vec3.max(pos[0], Vec3.max(pos[1], pos[2])));
 
             for (min.z()..max.z()+1) |z| {
                 for (min.y()..max.y()+1) |y| {
                     for (min.x()..max.x()+1) |x| {
-                        const index = grid.getCellIdx(x,y,z);
+                        const index = grid.linearlizeCellIdx(x,y,z);
                         cells[index].num_triangles += 1;
                     }
                 }
@@ -102,13 +102,13 @@ pub const Geometry = struct {
 		const grid = &geometry.grid;
 		const indices = try geometry.arena.allocator().alloc(usize, total_triangles_count);
 	    for (geometry.triangles.items(.pos), 0..) |pos, triangle_index| {
-            const min = grid.getCellPos(Vec3.min(pos[0], Vec3.min(pos[1], pos[2])));
-            const max = grid.getCellPos(Vec3.max(pos[0], Vec3.max(pos[1], pos[2])));
+            const min = grid.getCellIdx(Vec3.min(pos[0], Vec3.min(pos[1], pos[2])));
+            const max = grid.getCellIdx(Vec3.max(pos[0], Vec3.max(pos[1], pos[2])));
 
             for (min.z()..max.z()+1) |z| {
                 for (min.y()..max.y()+1) |y| {
                     for (min.x()..max.x()+1) |x| {
-                        const cell_index = grid.getCellIdx(x,y,z);
+                        const cell_index = grid.linearlizeCellIdx(x,y,z);
                         var cell = &geometry.cells[cell_index];
                         indices[cell.first_triangle + cell.num_triangles] = triangle_index;
                         cell.num_triangles += 1;
