@@ -1,5 +1,5 @@
 {
-	"grid_resolution": null,
+	"grid_resolution": [128, 128, 128],
 	"num_threads": null,
 	"num_samples": 3,
 	"max_bounce": 4

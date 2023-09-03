@@ -42,7 +42,6 @@ pub const Geometry = struct {
 	}
 
 	fn initGrid(geometry: *Geometry) !void {
-	    var mean_triangle_size = Vec3.zeroes();
 	    var bbox: Bbox = .{};
 
 	    for (geometry.triangles.items(.pos)) |pos| {
@@ -50,15 +49,10 @@ pub const Geometry = struct {
             for (0..3) |i| {
                 triangle_bbox.extendBy(pos[i]);
             }
-            mean_triangle_size = Vec3.add(mean_triangle_size, triangle_bbox.size());
             bbox.unionWith(triangle_bbox);
 	    }
 
-	    mean_triangle_size = mean_triangle_size.div(Vec3.fromScalar(@floatFromInt(geometry.triangles.len)));
-	    const mean_triangle_count = bbox.size().div(mean_triangle_size);
-
-	    std.log.info("Mean triangle count: {d:.1}", .{mean_triangle_count.data});
-	    const resolution = main.config.grid_resolution orelse mean_triangle_count.div(Vec3.fromScalar(4)).ceil().toInt(u32);
+	    const resolution = main.config.grid_resolution;
 	    std.log.info("Grid resolution: {}", .{resolution.data});
 
 	    geometry.grid = Grid.init(bbox, resolution);
