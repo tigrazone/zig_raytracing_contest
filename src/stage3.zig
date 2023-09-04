@@ -187,7 +187,7 @@ pub const Scene = struct {
     }
 
     fn renderWorker(self: Scene, thread_idx: usize, thread_num: usize, camera: Camera, img: zigimg.Image) void {
-        const inv_num_samples = Vec3.ones().div(Vec3.fromScalar(@floatFromInt(main.config.num_samples)));
+        const inv_num_samples = Vec3.ones().div(Vec3.splat(@floatFromInt(main.config.num_samples)));
 
         var prng = std.rand.DefaultPrng.init(thread_idx);
         const random = prng.random();

@@ -34,7 +34,7 @@ pub fn Vec(comptime size: usize, comptime T: type) type {
             return .{ .data = array};
         }
 
-        pub fn fromScalar(s: T) Self {
+        pub fn splat(s: T) Self {
             return .{ .data = .{s, s, s}};
         }
 
@@ -47,7 +47,7 @@ pub fn Vec(comptime size: usize, comptime T: type) type {
         }
 
         pub fn clamp(self: Self, min_value: T, max_value: T) Self {
-            return min(self, max(fromScalar(min_value), fromScalar(max_value)));
+            return min(self, max(splat(min_value), splat(max_value)));
         }
 
         pub fn scale(self: Self, s: T) Self {
@@ -184,11 +184,11 @@ pub fn Vec(comptime size: usize, comptime T: type) type {
         }
 
         pub fn inc(self: Self) Self {
-            return self.add(Self.fromScalar(1));
+            return self.add(Self.splat(1));
         }
 
         pub fn dec(self: Self) Self {
-            return self.subtract(Self.fromScalar(1));
+            return self.subtract(Self.splat(1));
         }
 
         pub fn lessThan(a: Self, b: Self) Vec(size, bool) {
@@ -331,8 +331,8 @@ pub const Bbox = struct {
 
 test "bbox rayIntersection 1" {
     const bbox = Bbox{
-        .min = Vec3.fromScalar(-1),
-        .max = Vec3.fromScalar(1),
+        .min = Vec3.splat(-1),
+        .max = Vec3.splat(1),
     };
     const ray = Ray{
         .orig = vec3(0, 0, 5),
@@ -345,8 +345,8 @@ test "bbox rayIntersection 1" {
 
 test "bbox rayIntersection 2" {
     const bbox = Bbox{
-        .min = Vec3.fromScalar(1),
-        .max = Vec3.fromScalar(2),
+        .min = Vec3.splat(1),
+        .max = Vec3.splat(2),
     };
     const ray = Ray{
         .orig = vec3(0, 0, 0),
@@ -359,8 +359,8 @@ test "bbox rayIntersection 2" {
 
 test "bbox rayIntersection 3 (if orig is inside bbox => t < 0)" {
     const bbox = Bbox{
-        .min = Vec3.fromScalar(-1),
-        .max = Vec3.fromScalar(3),
+        .min = Vec3.splat(-1),
+        .max = Vec3.splat(3),
     };
     const ray = Ray{
         .orig = vec3(0, 0, 0),
@@ -373,8 +373,8 @@ test "bbox rayIntersection 3 (if orig is inside bbox => t < 0)" {
 
 test "bbox rayIntersection 4 (miss)" {
     const bbox = Bbox{
-        .min = Vec3.fromScalar(-1),
-        .max = Vec3.fromScalar(3),
+        .min = Vec3.splat(-1),
+        .max = Vec3.splat(3),
     };
     const ray = Ray{
         .orig = vec3(5, 5, 5),
@@ -428,15 +428,15 @@ pub const Grid = struct {
         t_hit = @max(0, t_hit);
 
         const sign = ray.dir.lessThan(Vec3.zeroes());
-        const step = sign.select(Vec3u.fromScalar(std.math.maxInt(u32)), Vec3u.fromScalar(1));
-        const exit = sign.select(Vec3u.fromScalar(0), grid.resolution.dec());
+        const step = sign.select(Vec3u.splat(std.math.maxInt(u32)), Vec3u.splat(1));
+        const exit = sign.select(Vec3u.splat(0), grid.resolution.dec());
 
         const t_delta = grid.cell_size.div(ray.dir).abs();
 
         const hit_local_pos = ray.at(t_hit).subtract(grid.bbox.min);
         const cell = Vec3u.min(hit_local_pos.div(grid.cell_size).toInt(u32), grid.resolution.dec());
-        const next_cell = cell.add(sign.select(Vec3u.fromScalar(0), Vec3u.fromScalar(1))).toFloat(f32);
-        const t_next_crossing = Vec3.fromScalar(t_hit).add(next_cell.mul(grid.cell_size).subtract(hit_local_pos).div(ray.dir));
+        const next_cell = cell.add(sign.select(Vec3u.splat(0), Vec3u.splat(1))).toFloat(f32);
+        const t_next_crossing = Vec3.splat(t_hit).add(next_cell.mul(grid.cell_size).subtract(hit_local_pos).div(ray.dir));
 
         var it: Iterator = .{
             .cell = cell.data,
