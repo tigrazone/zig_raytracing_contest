@@ -143,7 +143,7 @@ pub fn Vec(comptime size: usize, comptime T: type) type {
                     }
 
                     pub fn toRGB(self: Self) RGB {
-                        const rgb = self.clamp(0.0, 0.999999).sqrt().scale(256);
+                        const rgb = self.sqrt().clamp(0.0, 0.999999).scale(256);
                         return .{
                             .r = @intFromFloat(rgb.data[0]),
                             .g = @intFromFloat(rgb.data[1]),

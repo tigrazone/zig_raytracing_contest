@@ -270,20 +270,39 @@ pub fn loadGeometry(gltf: Gltf, geometry: *stage2.Geometry) !void {
 // =====================================================================================
 // =====================================================================================
 
-fn findCameraNode(gltf: Gltf) !Gltf.Node {
+fn findCameraIndex(gltf: Gltf, camera_name: ?[]const u8) !usize {
+    if (gltf.data.cameras.items.len == 0) {
+        return error.NoCamerasAtAll;
+    }
+    if (camera_name == null) {
+        return 0;
+    } else {
+        for (gltf.data.cameras.items, 0..) |camera, i| {
+            if (std.mem.eql(u8, camera.name, camera_name.?)) {
+                return i;
+            }
+        }
+        return error.CameraNotFound;
+    }
+}
+
+fn findCameraNode(gltf: Gltf, camera_idx: usize) !Gltf.Node {
     for (gltf.data.nodes.items) |node| {
-        if (node.camera != null) {
-            return node;
+        if (node.camera) |idx| {
+            if (idx == camera_idx) {
+                return node;
+            }
         }
     }
     return error.CameraNodeNotFound; // TODO: implement recursive search / deal with multiple instances of the same camera
 }
 
-pub fn loadCamera(gltf: Gltf, width: ?u16, height: ?u16) !stage3.Camera {
+pub fn loadCamera(gltf: Gltf, camera_name: ?[]const u8, width: ?u16, height: ?u16) !stage3.Camera {
 
-    const camera_node = try findCameraNode(gltf);
+    const camera_idx = try findCameraIndex(gltf, camera_name);
+    const camera_node = try findCameraNode(gltf, camera_idx);
+    const camera = gltf.data.cameras.items[camera_idx];
 
-    const camera = gltf.data.cameras.items[camera_node.camera.?];
     if (camera.type != .perspective) {
         return error.OnlyPerspectiveCamerasSupported;
     }

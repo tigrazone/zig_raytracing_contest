@@ -33,6 +33,7 @@ pub const std_options = struct {
 pub const CmdlineArgs = struct {
     in: []const u8 = "input.gltf",
     out: []const u8 = "output.png",
+    camera: ?[]const u8 = null,
     width: ?u16 = null,
     height: ?u16 = null,
 };
@@ -105,7 +106,8 @@ pub fn main() !void {
             std.log.info("Loaded in {}", .{getDuration(loading_time)});
 
             const preprocessing_time = std.time.nanoTimestamp();
-            camera = try stage1.loadCamera(gltf, args.options.width, args.options.height);
+            camera = try stage1.loadCamera(gltf,
+                args.options.camera, args.options.width, args.options.height);
             try stage1.loadMaterials(gltf, &scene);
             try stage1.loadGeometry(gltf, &geometry);
             std.log.info("Preprocessed in {}", .{getDuration(preprocessing_time)});
