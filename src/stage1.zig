@@ -36,18 +36,18 @@ fn loadGltfImagesWorker(tmp_allocator: std.mem.Allocator,
     var image_idx = thread_idx;
     while (image_idx < gltf.data.images.items.len) : (image_idx += thread_num) {
         const image = &gltf.data.images.items[image_idx];
-        var data: []const u8 = &.{};
+        var data: []align(4) const u8 = &.{};
         if (image.buffer_view != null) {
             const buffer_view = gltf.data.buffer_views.items[image.buffer_view.?];
             const buffer = gltf.data.buffers.items[buffer_view.buffer];
             const begin = buffer_view.byte_offset;
             const end = begin + buffer_view.byte_length;
-            data = buffer.data.?[begin..end];
+            data = @alignCast(buffer.data.?[begin..end]);
         } else {
             var tmp = [_]u8{undefined} ** 256;
             const img_path = try std.fmt.bufPrintZ(&tmp, "{s}/{s}", .{gltf_dir, image.uri.?});
             std.log.debug("Loading image {s}", .{img_path});
-            data = try main.loadFile(img_path, tmp_allocator);
+            data = try main.loadFile(img_path, tmp_allocator, 4);
         }
         defer if (image.buffer_view == null) {
             defer tmp_allocator.free(data);
@@ -79,7 +79,7 @@ pub fn loadGltfFile(_allocator: std.mem.Allocator, path: []const u8, threads: []
 
     std.log.debug("Loading scene {s}", .{path});
     const arena_allocator = gltf.arena.allocator();
-    const buf = try main.loadFile(path, arena_allocator);
+    const buf = try main.loadFile(path, arena_allocator, 1);
     try gltf.parse(buf);
 
     for (gltf.data.buffers.items, 0..) |*buffer, i| {
@@ -90,7 +90,7 @@ pub fn loadGltfFile(_allocator: std.mem.Allocator, path: []const u8, threads: []
         var tmp = [_]u8{undefined} ** 256;
         const buf_path = try std.fmt.bufPrint(&tmp, "{s}/{s}", .{gltf_dir, buffer.uri.?});
         std.log.debug("Loading buffer {s}", .{buf_path});
-        buffer.data = try main.loadFile(buf_path, arena_allocator);
+        buffer.data = try main.loadFile(buf_path, arena_allocator, 4);
     }
 
     var safe_tmp_allocator = std.heap.ThreadSafeAllocator{.child_allocator = _allocator};
@@ -118,13 +118,13 @@ pub fn loadGltfFile(_allocator: std.mem.Allocator, path: []const u8, threads: []
 // =====================================================================================
 // =====================================================================================
 
-fn findPrimitiveAttribute(primitive: Gltf.Primitive, comptime tag: std.meta.Tag(Gltf.Attribute)) !?Gltf.Index {
+fn findPrimitiveAttribute(primitive: Gltf.Primitive, comptime tag: std.meta.Tag(Gltf.Attribute)) ?Gltf.Index {
     for (primitive.attributes.items) |attribute| {
         if (attribute == tag) {
             return @field(attribute, @tagName(tag));
         }
     }
-    return error.AttributeNotFound;
+    return null;
 }
 
 fn Accessor(comptime T: type) type {
@@ -134,9 +134,17 @@ fn Accessor(comptime T: type) type {
         base_address: [*]const u8,
         num: usize,
         stride: usize,
+        const def_val: T = undefined;
 
         fn init(gltf: Gltf, accessor_idx: ?Gltf.Index) Self
         {
+            if (accessor_idx == null) {
+                return .{
+                    .base_address = @ptrCast(&def_val),
+                    .num = 0,
+                    .stride = 0,
+                };
+            }
             const accessor = gltf.data.accessors.items[accessor_idx.?];
             switch (T) {
                 Vec3 => {
@@ -214,9 +222,9 @@ fn loadTriangles(gltf: Gltf, triangles: *std.MultiArrayList(stage2.Triangle)) !v
             {
                 std.debug.assert(primitive.mode == .triangles);
 
-                const positions = Accessor(Vec3).init(gltf, try findPrimitiveAttribute(primitive, .position));
-                const normals = Accessor(Vec3).init(gltf, try findPrimitiveAttribute(primitive, .normal));
-                const texcoords = Accessor([2]f32).init(gltf, try findPrimitiveAttribute(primitive, .texcoord));
+                const positions = Accessor(Vec3).init(gltf, findPrimitiveAttribute(primitive, .position));
+                const normals = Accessor(Vec3).init(gltf, findPrimitiveAttribute(primitive, .normal));
+                const texcoords = Accessor([2]f32).init(gltf, findPrimitiveAttribute(primitive, .texcoord));
                 const indices = Accessor(u16).init(gltf, primitive.indices);
 
                 const triangles_count = indices.num / 3;

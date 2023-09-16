@@ -38,13 +38,13 @@ pub const CmdlineArgs = struct {
     height: ?u16 = null,
 };
 
-pub fn loadFile(path: []const u8, allocator: std.mem.Allocator) ![]const u8 {
+pub fn loadFile(path: []const u8, allocator: std.mem.Allocator, comptime alignment: u29) ![]align(alignment) const u8 {
     const file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
 
     const file_size = try file.getEndPos();
 
-    const buf = try allocator.alloc(u8, file_size);
+    const buf = try allocator.alignedAlloc(u8, alignment, file_size);
     errdefer allocator.free(buf);
 
     const bytes_read = try file.readAll(buf);
@@ -60,7 +60,7 @@ const Config = struct {
     max_bounce: u16,
 
     fn load(path: []const u8, allocator: std.mem.Allocator) !Config {
-        const buf = try loadFile(path, allocator);
+        const buf = try loadFile(path, allocator, 1);
         defer allocator.free(buf);
         var parsed_str = try std.json.parseFromSlice(Config, allocator, buf, .{});
         defer parsed_str.deinit();
