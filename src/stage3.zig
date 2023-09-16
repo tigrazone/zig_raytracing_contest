@@ -1,6 +1,5 @@
 
 const std = @import("std");
-const zigimg = @import("zigimg");
 
 const main = @import("main.zig");
 const linalg = @import("linalg.zig");
@@ -8,6 +7,7 @@ const linalg = @import("linalg.zig");
 const Vec3 = linalg.Vec3;
 const Ray = linalg.Ray;
 const Grid = linalg.Grid;
+const RGB = linalg.RGB;
 
 const add = Vec3.add;
 
@@ -186,16 +186,16 @@ pub const Scene = struct {
         return emissive.add(albedo.mul(scene.traceRayRecursive(new_ray, depth-1, hit.triangle_idx)));
     }
 
-    fn renderWorker(self: Scene, thread_idx: usize, thread_num: usize, camera: Camera, img: zigimg.Image) void {
+    fn renderWorker(self: Scene, thread_idx: usize, thread_num: usize, camera: Camera, img: []RGB) void {
         const inv_num_samples = Vec3.ones().div(Vec3.splat(@floatFromInt(main.config.num_samples)));
 
         var prng = std.rand.DefaultPrng.init(thread_idx);
         const random = prng.random();
 
-        const pixels_per_thread = (img.pixels.rgb24.len + thread_num - 1) / thread_num;
+        const pixels_per_thread = (img.len + thread_num - 1) / thread_num;
         var i = pixels_per_thread * thread_idx;
         for (0..pixels_per_thread) |_| {
-            if (i >= img.pixels.rgb24.len) {
+            if (i >= img.len) {
                 break;
             }
             const x: f32 = @floatFromInt(@mod(i, camera.w));
@@ -206,12 +206,12 @@ pub const Scene = struct {
                 const ray_color = self.traceRayRecursive(ray, main.config.max_bounce, std.math.maxInt(usize));
                 pixel = pixel.add(ray_color);
             }
-            img.pixels.rgb24[i] = pixel.mul(inv_num_samples).toRGB();
+            img[i] = pixel.mul(inv_num_samples).toRGB();
             i += 1;
         }
     }
 
-    pub fn render(self: Scene, threads: []std.Thread, camera: Camera, img: zigimg.Image) !void {
+    pub fn render(self: Scene, threads: []std.Thread, camera: Camera, img: []RGB) !void {
         for (threads, 0..) |*thread, i| {
             thread.* = try std.Thread.spawn(.{}, renderWorker, .{
                 self, i, threads.len, camera, img

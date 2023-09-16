@@ -1,7 +1,8 @@
 
 const std = @import("std");
 const Gltf = @import("zgltf");
-const zigimg = @import("zigimg");
+
+const c = @import("c.zig");
 
 const main = @import("main.zig");
 const linalg = @import("linalg.zig");
@@ -26,33 +27,48 @@ const cross = Vec3.cross;
 // =====================================================================================
 // =====================================================================================
 
-fn loadGltfImagesWorker(tmp_allocator: std.mem.Allocator, arena_allocator: std.mem.Allocator,
+fn loadGltfImagesWorker(tmp_allocator: std.mem.Allocator,
     gltf_dir: []const u8, gltf: *Gltf,
     thread_idx: usize, thread_num: usize) !void
 {
+    c.stbi_set_flip_vertically_on_load_thread(0);
+
     var image_idx = thread_idx;
     while (image_idx < gltf.data.images.items.len) : (image_idx += thread_num) {
         const image = &gltf.data.images.items[image_idx];
-        const im = blk: {
-            if (image.buffer_view != null) {
-                const buffer_view = gltf.data.buffer_views.items[image.buffer_view.?];
-                const buffer = gltf.data.buffers.items[buffer_view.buffer];
-                const begin = buffer_view.byte_offset;
-                const end = begin + buffer_view.byte_length;
-                break :blk try zigimg.Image.fromMemory(arena_allocator, buffer.data.?[begin..end]);
-            } else {
-                var tmp = [_]u8{undefined} ** 256;
-                const img_path = try std.fmt.bufPrintZ(&tmp, "{s}/{s}", .{gltf_dir, image.uri.?});
-                std.log.debug("Loading image {s}", .{img_path});
-                const data = try main.loadFile(img_path, tmp_allocator);
-                defer tmp_allocator.free(data);
-                break :blk try zigimg.Image.fromMemory(arena_allocator, data);
-            }
+        var data: []const u8 = &.{};
+        if (image.buffer_view != null) {
+            const buffer_view = gltf.data.buffer_views.items[image.buffer_view.?];
+            const buffer = gltf.data.buffers.items[buffer_view.buffer];
+            const begin = buffer_view.byte_offset;
+            const end = begin + buffer_view.byte_length;
+            data = buffer.data.?[begin..end];
+        } else {
+            var tmp = [_]u8{undefined} ** 256;
+            const img_path = try std.fmt.bufPrintZ(&tmp, "{s}/{s}", .{gltf_dir, image.uri.?});
+            std.log.debug("Loading image {s}", .{img_path});
+            data = try main.loadFile(img_path, tmp_allocator);
+        }
+        defer if (image.buffer_view == null) {
+            defer tmp_allocator.free(data);
         };
-        const ptr = try arena_allocator.create(zigimg.Image);
-        ptr.* = im;
-        image.data = @ptrCast(ptr);
+        var img_w: c_int = 0;
+        var img_h: c_int = 0;
+        var img_c: c_int = 0;
+        const img_data = c.stbi_loadf_from_memory(data.ptr, @intCast(data.len),
+            &img_w, &img_h, &img_c, 4);
+        image.w = @intCast(img_w);
+        image.h = @intCast(img_h);
+        image.c = 4;
+        image.data = img_data[0..image.w*image.h*image.c];
     }
+}
+
+pub fn freeGltf(gltf: *Gltf) void {
+    for (gltf.data.images.items) |img| {
+        c.stbi_image_free(@constCast(@ptrCast(img.data.?.ptr)));
+    }
+    gltf.deinit();
 }
 
 pub fn loadGltfFile(_allocator: std.mem.Allocator, path: []const u8, threads: []std.Thread) !Gltf {
@@ -78,10 +94,9 @@ pub fn loadGltfFile(_allocator: std.mem.Allocator, path: []const u8, threads: []
     }
 
     var safe_tmp_allocator = std.heap.ThreadSafeAllocator{.child_allocator = _allocator};
-    var safe_arena_allocator = std.heap.ThreadSafeAllocator{.child_allocator = arena_allocator};
     for (threads, 0..) |*thread, i| {
         thread.* = try std.Thread.spawn(.{}, loadGltfImagesWorker, .{
-            safe_tmp_allocator.allocator(), safe_arena_allocator.allocator(),
+            safe_tmp_allocator.allocator(),
             gltf_dir, &gltf,
             i, threads.len
         });
@@ -340,17 +355,20 @@ fn loadColorTexture(allocator: std.mem.Allocator, gltf: Gltf, texture_info: ?Glt
     if (texture_info) |info| {
         const texture = gltf.data.textures.items[info.index];
         const image = gltf.data.images.items[texture.source.?];
-        const im: *const zigimg.Image = @alignCast(@ptrCast(image.data.?));
-        const data = try allocator.alloc(Vec3, im.width*im.height);
-        var iter = im.iterator();
-        while (iter.next()) |pixel| {
-            data[iter.current_index-1] = vec3(pixel.r, pixel.g, pixel.b).mul(factor);
+        const data = try allocator.alloc(Vec3, image.w*image.h);
+        for (0..data.len) |i| {
+            const offset = i * image.c;
+            data[i] = vec3(
+                image.data.?[offset + 0],
+                image.data.?[offset + 1],
+                image.data.?[offset + 2]
+            ).mul(factor);
         }
         return .{
             .data = data,
-            .w = @floatFromInt(im.width),
-            .h = @floatFromInt(im.height),
-            .w_int = im.width,
+            .w = @floatFromInt(image.w),
+            .h = @floatFromInt(image.h),
+            .w_int = image.w,
         };
     } else {
         const data = try allocator.alloc(Vec3, 1);

@@ -26,17 +26,26 @@ pub fn build(b: *std.Build) void {
 
     exe.linkLibC();
 
+    const c_libs = b.addStaticLibrary(.{
+        .name = "c_libs",
+        .target = target,
+        .optimize = .ReleaseFast,
+    });
+    c_libs.addIncludePath(.{.path = "libs"});
+    c_libs.addCSourceFile(.{
+        .file = .{.path = "src/c_impl.c"},
+        .flags = &.{},
+    });
+    c_libs.linkLibC();
+
     const zgltf = b.anonymousDependency("libs/zgltf/", @import("libs/zgltf/build.zig"), .{
         .target = target,
         .optimize = optimize,
     });
     exe.addModule("zgltf", zgltf.module("zgltf"));
 
-    const zigimg = b.anonymousDependency("libs/zigimg/", @import("libs/zigimg/build.zig"), .{
-        .target = target,
-        .optimize = optimize,
-    });
-    exe.addModule("zigimg", zigimg.module("zigimg"));
+    exe.addIncludePath(.{.path = "libs"});
+    exe.linkLibrary(c_libs);
 
     const zigargs = b.anonymousDependency("libs/zig-args/", @import("libs/zig-args/build.zig"), .{
         .target = target,

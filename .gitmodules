@@ -1,9 +1,9 @@
 [submodule "libs/zgltf"]
 	path = libs/zgltf
 	url = git@github.com:log0div0/zgltf.git
-[submodule "libs/zigimg"]
-	path = libs/zigimg
-	url = https://github.com/zigimg/zigimg.git
 [submodule "libs/zig-args"]
 	path = libs/zig-args
 	url = https://github.com/MasterQ32/zig-args.git
+[submodule "libs/stb"]
+	path = libs/stb
+	url = https://github.com/nothings/stb.git

@@ -1,5 +1,14 @@
 const std = @import("std");
-const zigimg = @import("zigimg");
+
+pub const RGB = struct {
+    r: u8,
+    g: u8,
+    b: u8,
+};
+
+test "RGB size should be 3" {
+    try std.testing.expect(@sizeOf(RGB) == 3);
+}
 
 pub fn Vec(comptime size: usize, comptime T: type) type {
     return struct {
@@ -115,22 +124,26 @@ pub fn Vec(comptime size: usize, comptime T: type) type {
                     return .{ .data = @ceil(self.data) };
                 }
 
-                threadlocal var prng = std.rand.DefaultPrng.init(0);
-
-                pub fn randomUnitVector() Self {
-                    // Using Gaussian distribution for all three coordinates of the vector
-                    // will ensure an uniform distribution on the surface of the sphere.
-                    const random = prng.random();
-                    return init(
-                        random.floatNorm(T),
-                        random.floatNorm(T),
-                        random.floatNorm(T),
-                    ).normalize();
+                pub fn sqrt(self: Self) Self {
+                    return .{ .data = @sqrt(self.data) };
                 }
 
                 pub usingnamespace if (size == 3) struct {
-                    pub fn toRGB(self: Self) zigimg.color.Rgb24 {
-                        const rgb = self.clamp(0.0, 0.999999).scale(256);
+                    threadlocal var prng = std.rand.DefaultPrng.init(0);
+
+                    pub fn randomUnitVector() Self {
+                        // Using Gaussian distribution for all three coordinates of the vector
+                        // will ensure an uniform distribution on the surface of the sphere.
+                        const random = prng.random();
+                        return init(
+                            random.floatNorm(T),
+                            random.floatNorm(T),
+                            random.floatNorm(T),
+                        ).normalize();
+                    }
+
+                    pub fn toRGB(self: Self) RGB {
+                        const rgb = self.clamp(0.0, 0.999999).sqrt().scale(256);
                         return .{
                             .r = @intFromFloat(rgb.data[0]),
                             .g = @intFromFloat(rgb.data[1]),

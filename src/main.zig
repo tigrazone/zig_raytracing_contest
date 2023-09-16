@@ -1,7 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const zigimg = @import("zigimg");
 const zigargs = @import("zigargs");
+
+const c = @import("c.zig");
 
 const linalg = @import("linalg.zig");
 const stage1 = @import("stage1.zig");
@@ -13,6 +14,7 @@ test {
 }
 
 const Vec3u = linalg.Vec3u;
+const RGB = linalg.RGB;
 
 // =====================================================================================
 // =====================================================================================
@@ -68,6 +70,8 @@ const Config = struct {
 pub var config: Config = undefined;
 
 pub fn main() !void {
+    c.stbi_set_flip_vertically_on_load(0);
+
     std.log.info("{}", .{std_options.log_level});
 
     const start_time = std.time.nanoTimestamp();
@@ -97,7 +101,7 @@ pub fn main() !void {
         {
             const loading_time = std.time.nanoTimestamp();
             var gltf = try stage1.loadGltfFile(allocator, args.options.in, threads);
-            defer gltf.deinit();
+            defer stage1.freeGltf(&gltf);
             std.log.info("Loaded in {}", .{getDuration(loading_time)});
 
             const preprocessing_time = std.time.nanoTimestamp();
@@ -113,15 +117,24 @@ pub fn main() !void {
         std.log.info("Compiled in {}", .{getDuration(compile_time)});
     }
 
-    var img = try zigimg.Image.create(allocator, camera.w, camera.h, .rgb24);
-    defer img.deinit();
+    var img = try allocator.alloc(RGB, camera.w * camera.h);
+    defer allocator.free(img);
 
     const render_time = std.time.nanoTimestamp();
     try scene.render(threads, camera, img);
     std.log.info("Rendered in {}", .{getDuration(render_time)});
 
     const save_time = std.time.nanoTimestamp();
-    try img.writeToFilePath(args.options.out, .{.png = .{}});
+    const res = c.stbi_write_png(args.options.out.ptr,
+        @intCast(camera.w),
+        @intCast(camera.h),
+        @intCast(@sizeOf(RGB)),
+        img.ptr,
+        @intCast(@sizeOf(RGB) * camera.w));
+
+    if (res != 1) {
+        return error.WritePngFail;
+    }
     std.log.info("Saved in {}", .{getDuration(save_time)});
 
     std.log.info("Done in {}", .{getDuration(start_time)});
