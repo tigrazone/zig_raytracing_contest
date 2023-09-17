@@ -84,17 +84,27 @@ pub const Texture = struct {
     w: f32,
     h: f32,
     w_int: usize,
+    h_int: usize,
 
     fn frac(v: f32) f32 {
         return @fabs(v - @trunc(v));
     }
 
-    fn sample(self: Texture, u: f32, v: f32) Vec3 {
-        // TODO: move me into sampler and implement filtering
-        const x: usize = @intFromFloat(self.w * frac(u));
-        const y: usize = @intFromFloat(self.h * frac(v));
+    fn getPixel(self: Texture, x: usize, y: usize) Vec3 {
         const pos = y * self.w_int + x;
         return self.data[pos];
+    }
+
+    fn sample(self: Texture, u: f32, v: f32) Vec3 {
+        const ui: usize = @intFromFloat(@floor(self.w * u));
+        const vi: usize = @intFromFloat(@floor(self.h * v));
+        const x1: usize = ui % self.w_int;
+        const y1: usize = vi % self.h_int;
+        const x2: usize = (ui + 1) % self.w_int;
+        const y2: usize = (vi + 1) % self.h_int;
+        const r1 = Vec3.lerp(self.getPixel(x1, y1), self.getPixel(x2, y1), Vec3.splat(frac(u)));
+        const r2 = Vec3.lerp(self.getPixel(x1, y2), self.getPixel(x2, y2), Vec3.splat(frac(u)));
+        return Vec3.lerp(r1, r2, Vec3.splat(frac(v)));
     }
 };
 

@@ -37,6 +37,12 @@
 			"file_regex": "(.*?):(\\d+):(\\d+): (error: .*)",
 		},
 		{
+			"name": "TextureEncodingTest Debug",
+			"shell_cmd": "zig build run -Doptimize=Debug -- --in $project_path/../raytracing_contest_models/Tests/TextureEncodingTest/TextureEncodingTest.gltf --out $project_path/output.png --height 1080",
+			"working_dir": "$project_path",
+			"file_regex": "(.*?):(\\d+):(\\d+): (error: .*)",
+		},
+		{
 			"name": "TextureLinearInterpolationTest Debug",
 			"shell_cmd": "zig build run -Doptimize=Debug -- --in $project_path/../raytracing_contest_models/Tests/TextureLinearInterpolationTest/TextureLinearInterpolationTest.gltf --out $project_path/output.png --height 1080",
 			"working_dir": "$project_path",

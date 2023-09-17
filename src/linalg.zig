@@ -128,6 +128,10 @@ pub fn Vec(comptime size: usize, comptime T: type) type {
                     return .{ .data = @sqrt(self.data) };
                 }
 
+                pub fn lerp(a: Self, b: Self, t: Self) Self {
+                    return .{ .data = std.math.lerp(a.data, b.data, t.data) };
+                }
+
                 pub usingnamespace if (size == 3) struct {
                     threadlocal var prng = std.rand.DefaultPrng.init(0);
 

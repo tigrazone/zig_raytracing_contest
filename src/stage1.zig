@@ -396,6 +396,7 @@ fn loadColorTexture(allocator: std.mem.Allocator, gltf: Gltf, texture_info: ?Glt
             .w = @floatFromInt(image.w),
             .h = @floatFromInt(image.h),
             .w_int = image.w,
+            .h_int = image.h,
         };
     } else {
         const data = try allocator.alloc(Vec3, 1);
@@ -405,6 +406,7 @@ fn loadColorTexture(allocator: std.mem.Allocator, gltf: Gltf, texture_info: ?Glt
             .w = 1,
             .h = 1,
             .w_int = 1,
+            .h_int = 1,
         };
     }
 }
