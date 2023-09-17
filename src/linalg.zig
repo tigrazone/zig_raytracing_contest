@@ -63,6 +63,14 @@ pub fn Vec(comptime size: usize, comptime T: type) type {
             return .{ .data = self.data * @as(Data, @splat(s)) };
         }
 
+        pub fn pow(self: Self, p: T) Self {
+            return .{ .data = .{
+                std.math.pow(T, self.data[0], p),
+                std.math.pow(T, self.data[1], p),
+                std.math.pow(T, self.data[2], p),
+            }};
+        }
+
         pub usingnamespace switch (@typeInfo(T)) {
             .Int => struct {
                 pub fn toFloat(self: Self, comptime U: type) Vec(size, U) {
@@ -124,10 +132,6 @@ pub fn Vec(comptime size: usize, comptime T: type) type {
                     return .{ .data = @ceil(self.data) };
                 }
 
-                pub fn sqrt(self: Self) Self {
-                    return .{ .data = @sqrt(self.data) };
-                }
-
                 pub fn lerp(a: Self, b: Self, t: Self) Self {
                     return .{ .data = std.math.lerp(a.data, b.data, t.data) };
                 }
@@ -146,8 +150,10 @@ pub fn Vec(comptime size: usize, comptime T: type) type {
                         ).normalize();
                     }
 
+                    const gamma = 2.2;
+
                     pub fn toRGB(self: Self) RGB {
-                        const rgb = self.sqrt().clamp(0.0, 0.999999).scale(256);
+                        const rgb = self.pow(1.0/gamma).clamp(0.0, 0.999999).scale(256);
                         return .{
                             .r = @intFromFloat(rgb.data[0]),
                             .g = @intFromFloat(rgb.data[1]),
