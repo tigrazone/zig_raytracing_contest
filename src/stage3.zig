@@ -81,11 +81,15 @@ const Hit = struct {
 
 pub fn Texture(comptime T: type) type {
     return struct {
-        data: []T,
+        data: []const T,
         w: f32,
         h: f32,
         w_int: usize,
         h_int: usize,
+        u_min: usize,
+        u_max: usize,
+        v_min: usize,
+        v_max: usize,
 
         fn frac(v: f32) f32 {
             return @fabs(v - @trunc(v));
@@ -107,10 +111,10 @@ pub fn Texture(comptime T: type) type {
         fn sample(self: @This(), u: f32, v: f32) T {
             const ui: usize = @intFromFloat(@floor(self.w * u));
             const vi: usize = @intFromFloat(@floor(self.h * v));
-            const x1: usize = ui % self.w_int;
-            const y1: usize = vi % self.h_int;
-            const x2: usize = (ui + 1) % self.w_int;
-            const y2: usize = (vi + 1) % self.h_int;
+            const x1: usize = std.math.clamp(ui, self.u_min, self.u_max) % self.w_int;
+            const y1: usize = std.math.clamp(vi, self.v_min, self.v_max) % self.h_int;
+            const x2: usize = std.math.clamp(ui + 1, self.u_min, self.u_max) % self.w_int;
+            const y2: usize = std.math.clamp(vi + 1, self.v_min, self.v_max) % self.h_int;
             const r1 = lerp(self.getPixel(x1, y1), self.getPixel(x2, y1), frac(u));
             const r2 = lerp(self.getPixel(x1, y2), self.getPixel(x2, y2), frac(u));
             return lerp(r1, r2, frac(v));

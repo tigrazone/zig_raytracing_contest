@@ -378,6 +378,52 @@ pub fn loadCamera(gltf: Gltf, camera_name: ?[]const u8, width: ?u16, height: ?u1
 // =====================================================================================
 // =====================================================================================
 
+fn initTexture(comptime Pixel: type, data: []Pixel, gltf: Gltf, texture: Gltf.Texture) stage3.Texture(Pixel) {
+    const image = gltf.data.images.items[texture.source.?];
+    var u_min: usize = std.math.minInt(usize);
+    var u_max: usize = std.math.maxInt(usize);
+    var v_min: usize = std.math.minInt(usize);
+    var v_max: usize = std.math.maxInt(usize);
+    if (texture.sampler) |idx| {
+        const sampler = gltf.data.samplers.items[idx];
+        if (sampler.wrap_s == .clamp_to_edge) {
+            u_min = 0;
+            u_max = image.w - 1;
+        }
+        if (sampler.wrap_t == .clamp_to_edge) {
+            v_min = 0;
+            v_max = image.h - 1;
+        }
+    }
+    return .{
+        .data = data,
+        .w = @floatFromInt(image.w),
+        .h = @floatFromInt(image.h),
+        .w_int = image.w,
+        .h_int = image.h,
+        .u_min = u_min,
+        .u_max = u_max,
+        .v_min = v_min,
+        .v_max = v_max,
+    };
+}
+
+fn initDummyTexture(comptime Pixel: type, pixel: Pixel, allocator: std.mem.Allocator) !stage3.Texture(Pixel) {
+    const data = try allocator.alloc(Pixel, 1);
+    data[0] = pixel;
+    return .{
+        .data = data,
+        .w = 1,
+        .h = 1,
+        .w_int = 1,
+        .h_int = 1,
+        .u_min = 0,
+        .u_max = 0,
+        .v_min = 0,
+        .v_max = 0,
+    };
+}
+
 fn loadColorTexture(allocator: std.mem.Allocator, gltf: Gltf, texture_info: ?Gltf.TextureInfo, _factor: []const f32) !stage3.Texture(Vec3) {
     const factor = vec3(_factor[0], _factor[1], _factor[2]);
     if (texture_info) |info| {
@@ -392,23 +438,9 @@ fn loadColorTexture(allocator: std.mem.Allocator, gltf: Gltf, texture_info: ?Glt
                 image.data.?[offset + 2]
             ).mul(factor);
         }
-        return .{
-            .data = data,
-            .w = @floatFromInt(image.w),
-            .h = @floatFromInt(image.h),
-            .w_int = image.w,
-            .h_int = image.h,
-        };
+        return initTexture(Vec3, data, gltf, texture);
     } else {
-        const data = try allocator.alloc(Vec3, 1);
-        data[0] = factor;
-        return .{
-            .data = data,
-            .w = 1,
-            .h = 1,
-            .w_int = 1,
-            .h_int = 1,
-        };
+        return try initDummyTexture(Vec3, factor, allocator);
     }
 }
 
@@ -429,25 +461,11 @@ fn loadTransparencyTexture(allocator: std.mem.Allocator, gltf: Gltf, material: G
                         data[i] = alpha;
                     }
                 }
-                return .{
-                    .data = data,
-                    .w = @floatFromInt(image.w),
-                    .h = @floatFromInt(image.h),
-                    .w_int = image.w,
-                    .h_int = image.h,
-                };
+                return initTexture(f32, data, gltf, texture);
             }
         }
     }
-    const data = try allocator.alloc(f32, 1);
-    data[0] = 1.0;
-    return .{
-        .data = data,
-        .w = 1,
-        .h = 1,
-        .w_int = 1,
-        .h_int = 1,
-    };
+    return try initDummyTexture(f32, 1.0, allocator);
 }
 
 fn loadMaterial(allocator: std.mem.Allocator, gltf: Gltf, material_idx: Gltf.Index) !stage3.Material {
