@@ -79,38 +79,49 @@ const Hit = struct {
     triangle_idx: usize,
 };
 
-pub const Texture = struct {
-    data: []Vec3,
-    w: f32,
-    h: f32,
-    w_int: usize,
-    h_int: usize,
+pub fn Texture(comptime T: type) type {
+    return struct {
+        data: []T,
+        w: f32,
+        h: f32,
+        w_int: usize,
+        h_int: usize,
 
-    fn frac(v: f32) f32 {
-        return @fabs(v - @trunc(v));
-    }
+        fn frac(v: f32) f32 {
+            return @fabs(v - @trunc(v));
+        }
 
-    fn getPixel(self: Texture, x: usize, y: usize) Vec3 {
-        const pos = y * self.w_int + x;
-        return self.data[pos];
-    }
+        fn getPixel(self: @This(), x: usize, y: usize) T {
+            const pos = y * self.w_int + x;
+            return self.data[pos];
+        }
 
-    fn sample(self: Texture, u: f32, v: f32) Vec3 {
-        const ui: usize = @intFromFloat(@floor(self.w * u));
-        const vi: usize = @intFromFloat(@floor(self.h * v));
-        const x1: usize = ui % self.w_int;
-        const y1: usize = vi % self.h_int;
-        const x2: usize = (ui + 1) % self.w_int;
-        const y2: usize = (vi + 1) % self.h_int;
-        const r1 = Vec3.lerp(self.getPixel(x1, y1), self.getPixel(x2, y1), Vec3.splat(frac(u)));
-        const r2 = Vec3.lerp(self.getPixel(x1, y2), self.getPixel(x2, y2), Vec3.splat(frac(u)));
-        return Vec3.lerp(r1, r2, Vec3.splat(frac(v)));
-    }
-};
+        fn lerp(a: T, b: T, x: f32) T {
+            if (T == Vec3) {
+                return Vec3.lerp(a, b, Vec3.splat(x));
+            } else if (T == f32) {
+                return std.math.lerp(a, b, x);
+            }
+        }
+
+        fn sample(self: @This(), u: f32, v: f32) T {
+            const ui: usize = @intFromFloat(@floor(self.w * u));
+            const vi: usize = @intFromFloat(@floor(self.h * v));
+            const x1: usize = ui % self.w_int;
+            const y1: usize = vi % self.h_int;
+            const x2: usize = (ui + 1) % self.w_int;
+            const y2: usize = (vi + 1) % self.h_int;
+            const r1 = lerp(self.getPixel(x1, y1), self.getPixel(x2, y1), frac(u));
+            const r2 = lerp(self.getPixel(x1, y2), self.getPixel(x2, y2), frac(u));
+            return lerp(r1, r2, frac(v));
+        }
+    };
+}
 
 pub const Material = struct {
-    base_color: Texture,
-    emissive: Texture,
+    base_color: Texture(Vec3),
+    emissive: Texture(Vec3),
+    transparency: Texture(f32),
 };
 
 pub const Cell = struct {
@@ -170,7 +181,7 @@ pub const Scene = struct {
         return nearest_hit;
     }
 
-    fn traceRayRecursive(scene: Scene, ray: Ray, depth: u16, ignore_triangle: usize) Vec3 {
+    fn traceRayRecursive(scene: Scene, ray: Ray, depth: u16, ignore_triangle: usize, random: std.rand.Random) Vec3 {
         if (depth == 0) {
             return Vec3.zeroes();
         }
@@ -187,13 +198,21 @@ pub const Scene = struct {
         const texcoord = triangle.interpolate("texcoord", hit.u, hit.v); // TODO: get texcoord channel from Texture
         const albedo = material.base_color.sample(texcoord[0], texcoord[1]);
         const emissive = material.emissive.sample(texcoord[0], texcoord[1]);
+        const transparency = material.transparency.sample(texcoord[0], texcoord[1]);
         const normal = triangle.interpolate("normal", hit.u, hit.v);
-        const scattered_dir = normal.add(Vec3.randomUnitVector()).normalize();
+        if (random.float(f32) > transparency) {
+            const new_ray = .{
+                .orig = ray.at(hit.t),
+                .dir = ray.dir, // TODO!!!!
+            };
+            return scene.traceRayRecursive(new_ray, depth-1, hit.triangle_idx, random);
+        }
+        const scattered_dir = normal.add(Vec3.randomUnitVector(random)).normalize();
         const new_ray = .{
             .orig = ray.at(hit.t),
             .dir = scattered_dir,
         };
-        return emissive.add(albedo.mul(scene.traceRayRecursive(new_ray, depth-1, hit.triangle_idx)));
+        return emissive.add(albedo.mul(scene.traceRayRecursive(new_ray, depth-1, hit.triangle_idx, random)));
     }
 
     fn renderWorker(self: Scene, thread_idx: usize, thread_num: usize, camera: Camera, img: []RGB) void {
@@ -213,7 +232,7 @@ pub const Scene = struct {
             var pixel = Vec3.zeroes();
             for (0..main.config.num_samples) |_| {
                 const ray = camera.getRay(x + random.float(f32), y + random.float(f32));
-                const ray_color = self.traceRayRecursive(ray, main.config.max_bounce, std.math.maxInt(usize));
+                const ray_color = self.traceRayRecursive(ray, main.config.max_bounce, std.math.maxInt(usize), random);
                 pixel = pixel.add(ray_color);
             }
             img[i] = pixel.mul(inv_num_samples).toRGB();

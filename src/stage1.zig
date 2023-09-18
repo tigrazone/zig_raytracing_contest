@@ -54,12 +54,13 @@ fn loadGltfImagesWorker(tmp_allocator: std.mem.Allocator,
         };
         var img_w: c_int = 0;
         var img_h: c_int = 0;
-        var img_c: c_int = 0;
+        var img_actual_c: c_int = 0;
         const img_data = c.stbi_loadf_from_memory(data.ptr, @intCast(data.len),
-            &img_w, &img_h, &img_c, 4);
+            &img_w, &img_h, &img_actual_c, 4);
         image.w = @intCast(img_w);
         image.h = @intCast(img_h);
         image.c = 4;
+        image.actual_c = @intCast(img_actual_c);
         image.data = img_data[0..image.w*image.h*image.c];
     }
 }
@@ -377,7 +378,7 @@ pub fn loadCamera(gltf: Gltf, camera_name: ?[]const u8, width: ?u16, height: ?u1
 // =====================================================================================
 // =====================================================================================
 
-fn loadColorTexture(allocator: std.mem.Allocator, gltf: Gltf, texture_info: ?Gltf.TextureInfo, _factor: []const f32) !stage3.Texture {
+fn loadColorTexture(allocator: std.mem.Allocator, gltf: Gltf, texture_info: ?Gltf.TextureInfo, _factor: []const f32) !stage3.Texture(Vec3) {
     const factor = vec3(_factor[0], _factor[1], _factor[2]);
     if (texture_info) |info| {
         const texture = gltf.data.textures.items[info.index];
@@ -411,6 +412,44 @@ fn loadColorTexture(allocator: std.mem.Allocator, gltf: Gltf, texture_info: ?Glt
     }
 }
 
+fn loadTransparencyTexture(allocator: std.mem.Allocator, gltf: Gltf, material: Gltf.Material) !stage3.Texture(f32) {
+    if (material.alpha_mode != .@"opaque") {
+        if (material.metallic_roughness.base_color_texture) |info| {
+            const texture = gltf.data.textures.items[info.index];
+            const image = gltf.data.images.items[texture.source.?];
+            if (image.actual_c == 4 or image.actual_c == 2) {
+                const data = try allocator.alloc(f32, image.w*image.h);
+                for (0..data.len) |i| {
+                    const offset = i * image.c;
+                    const alpha = image.data.?[offset + 3];
+                    if (material.alpha_mode == .mask) {
+                        // std.log.info("alpha = {} material.alpha_cutoff = {}", .{alpha, material.alpha_cutoff});
+                        data[i] = if (alpha > material.alpha_cutoff) 1.0 else 0.0;
+                    } else {
+                        data[i] = alpha;
+                    }
+                }
+                return .{
+                    .data = data,
+                    .w = @floatFromInt(image.w),
+                    .h = @floatFromInt(image.h),
+                    .w_int = image.w,
+                    .h_int = image.h,
+                };
+            }
+        }
+    }
+    const data = try allocator.alloc(f32, 1);
+    data[0] = 1.0;
+    return .{
+        .data = data,
+        .w = 1,
+        .h = 1,
+        .w_int = 1,
+        .h_int = 1,
+    };
+}
+
 fn loadMaterial(allocator: std.mem.Allocator, gltf: Gltf, material_idx: Gltf.Index) !stage3.Material {
     const material = gltf.data.materials.items[material_idx];
     return .{
@@ -420,6 +459,8 @@ fn loadMaterial(allocator: std.mem.Allocator, gltf: Gltf, material_idx: Gltf.Ind
         .emissive = try loadColorTexture(allocator, gltf,
             material.emissive_texture,
             &material.emissive_factor), // TODO: material.emissive_strength
+        .transparency = try loadTransparencyTexture(allocator, gltf,
+            material),
     };
 }
 

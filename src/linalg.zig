@@ -137,12 +137,9 @@ pub fn Vec(comptime size: usize, comptime T: type) type {
                 }
 
                 pub usingnamespace if (size == 3) struct {
-                    threadlocal var prng = std.rand.DefaultPrng.init(0);
-
-                    pub fn randomUnitVector() Self {
+                    pub fn randomUnitVector(random: std.rand.Random) Self {
                         // Using Gaussian distribution for all three coordinates of the vector
                         // will ensure an uniform distribution on the surface of the sphere.
-                        const random = prng.random();
                         return init(
                             random.floatNorm(T),
                             random.floatNorm(T),
