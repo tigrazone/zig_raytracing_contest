@@ -380,27 +380,27 @@ pub fn loadCamera(gltf: Gltf, camera_name: ?[]const u8, width: ?u16, height: ?u1
 
 fn initTexture(comptime Pixel: type, data: []Pixel, gltf: Gltf, texture: Gltf.Texture) stage3.Texture(Pixel) {
     const image = gltf.data.images.items[texture.source.?];
-    var u_min: usize = std.math.minInt(usize);
-    var u_max: usize = std.math.maxInt(usize);
-    var v_min: usize = std.math.minInt(usize);
-    var v_max: usize = std.math.maxInt(usize);
+    var u_min: i32 = std.math.minInt(i32);
+    var u_max: i32 = std.math.maxInt(i32);
+    var v_min: i32 = std.math.minInt(i32);
+    var v_max: i32 = std.math.maxInt(i32);
     if (texture.sampler) |idx| {
         const sampler = gltf.data.samplers.items[idx];
         if (sampler.wrap_s == .clamp_to_edge) {
             u_min = 0;
-            u_max = image.w - 1;
+            u_max = @intCast(image.w - 1);
         }
         if (sampler.wrap_t == .clamp_to_edge) {
             v_min = 0;
-            v_max = image.h - 1;
+            v_max = @intCast(image.h - 1);
         }
     }
     return .{
         .data = data,
         .w = @floatFromInt(image.w),
         .h = @floatFromInt(image.h),
-        .w_int = image.w,
-        .h_int = image.h,
+        .w_int = @intCast(image.w),
+        .h_int = @intCast(image.h),
         .u_min = u_min,
         .u_max = u_max,
         .v_min = v_min,
