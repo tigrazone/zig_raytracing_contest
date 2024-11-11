@@ -19,7 +19,7 @@ pub fn build(b: *std.Build) void {
         .name = "zig_raytracing_contest",
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -31,9 +31,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = .ReleaseFast,
     });
-    c_libs.addIncludePath(.{.path = "libs"});
+    c_libs.addIncludePath(b.path("libs"));
     c_libs.addCSourceFile(.{
-        .file = .{.path = "src/c_impl.c"},
+        .file = b.path("src/c_impl.c"),
         .flags = &.{},
     });
     c_libs.linkLibC();
@@ -44,7 +44,7 @@ pub fn build(b: *std.Build) void {
     });
     exe.addModule("zgltf", zgltf.module("zgltf"));
 
-    exe.addIncludePath(.{.path = "libs"});
+    exe.addIncludePath(b.path("libs"));
     exe.linkLibrary(c_libs);
 
     const zigargs = b.anonymousDependency("libs/zig-args/", @import("libs/zig-args/build.zig"), .{
